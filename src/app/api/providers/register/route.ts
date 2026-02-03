@@ -31,15 +31,15 @@ function isValidEmail(email: string): boolean {
 }
 
 function isValidPhone(phone: string): boolean {
-    // Indian phone number validation (simplified)
-    const phoneRegex = /^(\+91|0)?[6-9][0-9]{9}$/
+    // UK phone number validation (simplified)
+    const phoneRegex = /^(?:(?:\+44)|0)\d{10}$/
     return phoneRegex.test(phone.replace(/\s/g, ''))
 }
 
 function isValidPostcode(postcode: string): boolean {
-    // Indian PIN code validation (6 digits)
-    const postcodeRegex = /^[1-9][0-9]{5}$/
-    return postcodeRegex.test(postcode.replace(/\s/g, ''))
+    // UK postcode validation
+    const postcodeRegex = /^[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}$/i
+    return postcodeRegex.test(postcode.trim())
 }
 
 const VALID_SERVICES: ServiceCategory[] = [
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (!body.phone || !isValidPhone(body.phone)) {
-            errors.push('Valid Indian phone number is required')
+            errors.push('Valid UK phone number is required')
         }
 
         if (!body.password || body.password.length < 8) {
@@ -98,18 +98,18 @@ export async function POST(request: NextRequest) {
         }
 
         if (!body.address?.postcode || !isValidPostcode(body.address.postcode)) {
-            errors.push('Valid Indian PIN code is required')
+            errors.push('Valid UK postcode is required')
         }
 
         if (!body.location?.latitude || !body.location?.longitude) {
             errors.push('Location coordinates are required')
         }
 
-        // Validate coordinates are within India bounds (approximately)
+        // Validate coordinates are within UK bounds (approximately)
         if (body.location) {
             const { latitude, longitude } = body.location
-            if (latitude < 8 || latitude > 35 || longitude < 68 || longitude > 97) {
-                errors.push('Location must be within India')
+            if (latitude < 49.5 || latitude > 61 || longitude < -8 || longitude > 2) {
+                errors.push('Location must be within United Kingdom')
             }
         }
 
@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
                 address_city: body.address.city.trim(),
                 address_postcode: body.address.postcode.toUpperCase().trim(),
                 address_county: body.address.county?.trim() || null,
-                address_country: body.address.country || 'India',
+                address_country: body.address.country || 'United Kingdom',
                 formatted_address: body.address.formatted_address || null,
                 latitude: body.location.latitude,
                 longitude: body.location.longitude,

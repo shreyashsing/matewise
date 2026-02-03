@@ -1,6 +1,6 @@
 /**
- * Service Request Response API Route
- * PATCH /api/service-requests/[id]/respond - Accept or reject a request
+ * OTP Verification API Route
+ * POST /api/service-requests/[id]/verify-otp - Verify OTP for service confirmation
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -24,7 +24,7 @@ function getSupabaseAdmin() {
     })
 }
 
-export async function PATCH(
+export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
@@ -40,84 +40,79 @@ export async function PATCH(
 
         const { id } = await params
         const body = await request.json()
-        const { action } = body // 'accept' or 'reject'
+        const { otp } = body
 
-        if (!action || !['accept', 'reject'].includes(action)) {
+        if (!otp) {
             return NextResponse.json({
                 success: false,
-                error: 'Invalid action. Must be "accept" or "reject"'
+                error: 'OTP is required'
             } as ApiResponse, { status: 400 })
         }
 
-        // Get the current request
-        const { data: currentRequest, error: fetchError } = await supabaseAdmin
+        // Get the service request
+        const { data: serviceRequest, error: fetchError } = await supabaseAdmin
             .from('service_requests')
             .select('*')
             .eq('id', id)
             .single()
 
-        if (fetchError || !currentRequest) {
+        if (fetchError || !serviceRequest) {
             return NextResponse.json({
                 success: false,
                 error: 'Service request not found'
             } as ApiResponse, { status: 404 })
         }
 
-        // Check if request is still pending
-        if (currentRequest.status !== 'pending') {
+        // Check if request is accepted
+        if (serviceRequest.status !== 'accepted') {
             return NextResponse.json({
                 success: false,
-                error: `Request already ${currentRequest.status}`
+                error: 'Service request is not in accepted status'
             } as ApiResponse, { status: 400 })
         }
 
-        // Check if request has expired
-        if (new Date(currentRequest.expires_at) < new Date()) {
-            // Update to expired status
-            await supabaseAdmin
-                .from('service_requests')
-                .update({ status: 'expired' })
-                .eq('id', id)
-
+        // Check if OTP already verified
+        if (serviceRequest.otp_verified) {
             return NextResponse.json({
                 success: false,
-                error: 'Request has expired'
+                error: 'OTP already verified'
             } as ApiResponse, { status: 400 })
         }
 
-        // Update the request status
-        const newStatus = action === 'accept' ? 'accepted' : 'rejected'
-        
-        // Generate 6-digit OTP if accepting
-        const otp = action === 'accept' ? Math.floor(100000 + Math.random() * 900000).toString() : null
-        
+        // Verify OTP
+        if (serviceRequest.otp !== otp.toString()) {
+            return NextResponse.json({
+                success: false,
+                error: 'Invalid OTP'
+            } as ApiResponse, { status: 400 })
+        }
+
+        // Update OTP verification status
         const { data: updatedRequest, error: updateError } = await supabaseAdmin
             .from('service_requests')
             .update({
-                status: newStatus,
-                responded_at: new Date().toISOString(),
-                ...(otp && { otp, otp_verified: false })
+                otp_verified: true
             })
             .eq('id', id)
             .select()
             .single()
 
         if (updateError) {
-            console.error('Error updating request:', updateError)
+            console.error('Error updating OTP verification:', updateError)
             return NextResponse.json({
                 success: false,
-                error: 'Failed to update request'
+                error: 'Failed to verify OTP'
             } as ApiResponse, { status: 500 })
         }
 
         return NextResponse.json({
             success: true,
             data: updatedRequest,
-            message: `Request ${newStatus} successfully`
+            message: 'OTP verified successfully'
         } as ApiResponse)
 
     } catch (error) {
-        console.error('Respond to request error:', error)
+        console.error('OTP verification error:', error)
         return NextResponse.json({
             success: false,
             error: 'An unexpected error occurred'

@@ -164,14 +164,14 @@ export function ProvidersMap({
                         position={{ lat: center.latitude, lng: center.longitude }}
                         icon={{
                             path: google.maps.SymbolPath.CIRCLE,
-                            fillColor: '#000000',
-                            fillOpacity: 1,
-                            strokeColor: '#ffffff',
-                            strokeWeight: 3,
-                            scale: 10
+                            fillColor: '#3B82F6',
+                            fillOpacity: 0.3,
+                            strokeColor: '#3B82F6',
+                            strokeWeight: 2,
+                            scale: 8
                         }}
-                        title="Your location"
-                        zIndex={1000}
+                        title="Your search location"
+                        zIndex={1}
                     />
 
                     {/* Provider markers */}

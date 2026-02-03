@@ -143,6 +143,12 @@ export interface ProviderRegistrationData {
     years_experience?: number
     hourly_rate?: number
     
+    // Verification Documents
+    id_document?: File
+    business_license?: File
+    certifications?: File[]
+    insurance_document?: File
+    
     // Step 4: Location
     address: Address
     location: GeoLocation

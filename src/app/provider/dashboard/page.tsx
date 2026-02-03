@@ -40,6 +40,7 @@ export default function ProviderDashboard() {
         rating_average?: number
         total_jobs_completed?: number
     } | null>(null)
+    const [isLoadingProvider, setIsLoadingProvider] = useState(true)
     const [isSigningOut, setIsSigningOut] = useState(false)
     const [pendingRequests, setPendingRequests] = useState<ServiceRequest[]>([])
     const [processingRequest, setProcessingRequest] = useState<string | null>(null)
@@ -59,6 +60,7 @@ export default function ProviderDashboard() {
         if (!user) return
 
         const fetchProviderData = async () => {
+            setIsLoadingProvider(true)
             try {
                 // Fetch provider record using auth user ID
                 const response = await fetch(`/api/providers/${user.id}?byUserId=true`)
@@ -93,6 +95,8 @@ export default function ProviderDashboard() {
                     last_name: user.user_metadata?.last_name,
                     status: 'pending'
                 })
+            } finally {
+                setIsLoadingProvider(false)
             }
         }
 
@@ -184,7 +188,7 @@ export default function ProviderDashboard() {
         router.push('/provider/login')
     }
 
-    if (loading || !user || (role && role !== 'provider')) {
+    if (loading || isLoadingProvider || !user || (role && role !== 'provider')) {
         return (
             <div className="min-h-screen bg-slate-50 flex items-center justify-center">
                 <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
@@ -239,7 +243,7 @@ export default function ProviderDashboard() {
                 </div>
 
                 {/* Status Banner */}
-                {(!providerData || providerData?.status === 'pending') && (
+                {providerData?.status === 'pending' && (
                     <Card className="mb-8 border-amber-200 bg-amber-50">
                         <CardContent className="p-6">
                             <div className="flex items-start gap-4">

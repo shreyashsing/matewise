@@ -24,10 +24,10 @@ const mapContainerStyle = {
     borderRadius: '0.75rem'
 }
 
-// Default to New Delhi, India
+// Default to London, UK
 const defaultCenter: GeoLocation = {
-    latitude: 28.6139,
-    longitude: 77.2090
+    latitude: 51.5074,
+    longitude: -0.1278
 }
 
 export function LocationPicker({
@@ -98,14 +98,26 @@ export function LocationPicker({
 
         const streetNumber = getComponent(['street_number'])
         const route = getComponent(['route'])
-        const street = streetNumber ? `${streetNumber} ${route}` : route
+        const street = streetNumber ? `${streetNumber} ${route}`.trim() : route
+
+        // Fallback for street if not found
+        const finalStreet = street || 
+            getComponent(['premise', 'subpremise']) || 
+            getComponent(['neighborhood', 'sublocality']) ||
+            'Address not specified'
+
+        const city = getComponent(['postal_town', 'locality', 'administrative_area_level_2']) ||
+            getComponent(['administrative_area_level_1']) ||
+            'City not specified'
+
+        const postcode = getComponent(['postal_code']) || '000000'
 
         return {
-            street: street || getComponent(['premise', 'subpremise']),
-            city: getComponent(['postal_town', 'locality', 'administrative_area_level_2']),
-            postcode: getComponent(['postal_code']),
+            street: finalStreet,
+            city: city,
+            postcode: postcode,
             county: getComponent(['administrative_area_level_2']),
-            country: getComponent(['country']),
+            country: getComponent(['country']) || 'United Kingdom',
             formatted_address: result.formatted_address
         }
     }
@@ -193,7 +205,7 @@ export function LocationPicker({
                 <Autocomplete
                     onLoad={onAutocompleteLoad}
                     onPlaceChanged={onPlaceSelect}
-                    restrictions={{ country: 'in' }}
+                    restrictions={{ country: 'gb' }}
                 >
                     <div className="relative">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />

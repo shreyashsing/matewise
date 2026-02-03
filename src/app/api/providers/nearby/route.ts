@@ -58,11 +58,11 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(response, { status: 400 })
         }
         
-        // Validate coordinates are within India bounds
-        if (latitude < 8 || latitude > 35 || longitude < 68 || longitude > 97) {
+        // Validate coordinates are within UK bounds
+        if (latitude < 49.5 || latitude > 61 || longitude < -8 || longitude > 2) {
             const response: ApiResponse = {
                 success: false,
-                error: 'Coordinates must be within India'
+                error: 'Coordinates must be within United Kingdom'
             }
             return NextResponse.json(response, { status: 400 })
         }

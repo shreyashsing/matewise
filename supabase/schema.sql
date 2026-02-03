@@ -116,6 +116,13 @@ CREATE TABLE IF NOT EXISTS public.providers (
     hourly_rate NUMERIC(10,2),
     minimum_charge NUMERIC(10,2),
     
+    -- Verification Documents
+    id_document_url TEXT,
+    business_license_url TEXT,
+    certification_urls TEXT[],
+    insurance_document_url TEXT,
+    documents_uploaded_at TIMESTAMPTZ,
+    
     -- Verification & Trust
     status provider_status NOT NULL DEFAULT 'pending',
     verification_status verification_status NOT NULL DEFAULT 'pending',
@@ -255,6 +262,10 @@ CREATE TABLE IF NOT EXISTS public.service_requests (
     
     -- Status
     status request_status NOT NULL DEFAULT 'pending',
+    
+    -- OTP for service verification
+    otp TEXT,
+    otp_verified BOOLEAN DEFAULT FALSE,
     
     -- Expiration
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 seconds'),

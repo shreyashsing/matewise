@@ -84,10 +84,10 @@ const SERVICE_CONFIG: Record<ServiceCategory, { title: string; description: stri
     }
 }
 
-// Default location (New Delhi, India)
+// Default location (London, UK)
 const DEFAULT_LOCATION: GeoLocation = {
-    latitude: 28.6139,
-    longitude: 77.2090
+    latitude: 51.5074,
+    longitude: -0.1278
 }
 
 // Loading fallback component

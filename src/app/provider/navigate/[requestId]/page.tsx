@@ -23,9 +23,10 @@ import {
     Locate,
     Car,
     Footprints,
-    CheckCircle
+    CheckCircle,
+    Shield
 } from 'lucide-react'
-import { Button, Card, CardContent } from '@/components/ui'
+import { Button, Card, CardContent, Input } from '@/components/ui'
 import { GoogleMapsProvider } from '@/components/maps'
 import { useAuth } from '@/hooks/use-auth'
 
@@ -39,6 +40,8 @@ interface ServiceRequestDetails {
     service_address?: string
     distance_km?: number
     status: string
+    otp?: string
+    otp_verified?: boolean
 }
 
 const mapContainerStyle = {
@@ -81,6 +84,11 @@ export default function ProviderNavigatePage({
     const [routeInfo, setRouteInfo] = useState<{ duration: string; distance: string } | null>(null)
     const [isRecalculating, setIsRecalculating] = useState(false)
     const [jobCompleted, setJobCompleted] = useState(false)
+    const [isMapLoaded, setIsMapLoaded] = useState(false)
+    const [otpInput, setOtpInput] = useState('')
+    const [otpVerifying, setOtpVerifying] = useState(false)
+    const [otpError, setOtpError] = useState<string | null>(null)
+    const [otpVerified, setOtpVerified] = useState(false)
     
     // Refs
     const mapRef = useRef<google.maps.Map | null>(null)
@@ -100,7 +108,7 @@ export default function ProviderNavigatePage({
                         return
                     }
                     setRequest(result.data)
-                    
+                    setOtpVerified(result.data.otp_verified || false)
                     // Fetch provider's registered location
                     const providerResponse = await fetch(`/api/providers/${result.data.provider_id}`)
                     const providerResult = await providerResponse.json()
@@ -177,6 +185,12 @@ export default function ProviderNavigatePage({
             return
         }
 
+        // Check if Google Maps API is loaded
+        if (typeof google === 'undefined' || !google.maps) {
+            console.log('Google Maps not loaded yet, waiting...')
+            return
+        }
+
         if (!directionsServiceRef.current) {
             directionsServiceRef.current = new google.maps.DirectionsService()
         }
@@ -222,16 +236,17 @@ export default function ProviderNavigatePage({
         }
     }, [providerLocation, request, travelMode])
 
-    // Calculate route when data is ready
+    // Calculate route when data is ready and map is loaded
     useEffect(() => {
-        if (providerLocation && request) {
+        if (providerLocation && request && isMapLoaded) {
             calculateRoute()
         }
-    }, [providerLocation, request, calculateRoute])
+    }, [providerLocation, request, isMapLoaded, calculateRoute])
 
     // Handle map load
     const onMapLoad = useCallback((map: google.maps.Map) => {
         mapRef.current = map
+        setIsMapLoaded(true)
     }, [])
 
     // Recenter map on registered provider location
@@ -244,11 +259,48 @@ export default function ProviderNavigatePage({
 
     // Mark job as completed
     const handleCompleteJob = async () => {
+        if (!otpVerified) {
+            setOtpError('Please verify OTP before marking complete')
+            return
+        }
         setJobCompleted(true)
         // In a real app, you'd update the request status to 'completed' via API
         setTimeout(() => {
             router.push('/provider/dashboard')
         }, 2000)
+    }
+
+    // Verify OTP
+    const handleVerifyOtp = async () => {
+        if (!otpInput || otpInput.length !== 6) {
+            setOtpError('Please enter a valid 6-digit OTP')
+            return
+        }
+
+        setOtpVerifying(true)
+        setOtpError(null)
+
+        try {
+            const response = await fetch(`/api/service-requests/${requestId}/verify-otp`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ otp: otpInput })
+            })
+
+            const result = await response.json()
+
+            if (result.success) {
+                setOtpVerified(true)
+                setOtpError(null)
+            } else {
+                setOtpError(result.error || 'Invalid OTP')
+            }
+        } catch (error) {
+            console.error('OTP verification error:', error)
+            setOtpError('Failed to verify OTP. Please try again.')
+        } finally {
+            setOtpVerifying(false)
+        }
     }
 
     // Loading state
@@ -434,26 +486,81 @@ export default function ProviderNavigatePage({
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="flex gap-3">
-                        <Button
-                            variant="outline"
-                            className="flex-1"
-                            onClick={() => {
-                                // Open in native maps app
-                                const url = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}&travelmode=${travelMode.toLowerCase()}`
-                                window.open(url, '_blank')
-                            }}
-                        >
-                            <Navigation className="h-4 w-4 mr-2" />
-                            Open in Maps
-                        </Button>
-                        <Button
-                            className="flex-1 bg-green-600 hover:bg-green-700"
-                            onClick={handleCompleteJob}
-                        >
-                            <CheckCircle className="h-4 w-4 mr-2" />
-                            Mark Complete
-                        </Button>
+                    <div className="space-y-3">
+                        {/* OTP Verification Section */}
+                        {!otpVerified ? (
+                            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                                <div className="flex items-center gap-2 mb-3">
+                                    <Shield className="h-5 w-5 text-blue-600" />
+                                    <h3 className="font-semibold text-blue-900">Verify OTP to Start Service</h3>
+                                </div>
+                                <p className="text-sm text-blue-700 mb-3">
+                                    Ask the customer for the 6-digit OTP to confirm your arrival
+                                </p>
+                                <div className="flex gap-2">
+                                    <Input
+                                        type="text"
+                                        placeholder="Enter 6-digit OTP"
+                                        value={otpInput}
+                                        onChange={(e) => {
+                                            const value = e.target.value.replace(/\D/g, '').slice(0, 6)
+                                            setOtpInput(value)
+                                            setOtpError(null)
+                                        }}
+                                        maxLength={6}
+                                        className="flex-1 text-center text-lg tracking-widest font-semibold"
+                                        disabled={otpVerifying}
+                                    />
+                                    <Button
+                                        onClick={handleVerifyOtp}
+                                        disabled={otpVerifying || otpInput.length !== 6}
+                                        className="bg-blue-600 hover:bg-blue-700"
+                                    >
+                                        {otpVerifying ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                                Verifying...
+                                            </>
+                                        ) : (
+                                            'Verify'
+                                        )}
+                                    </Button>
+                                </div>
+                                {otpError && (
+                                    <p className="text-sm text-red-600 mt-2">{otpError}</p>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                                <div className="flex items-center gap-2 text-green-800">
+                                    <CheckCircle className="h-5 w-5" />
+                                    <span className="font-semibold">OTP Verified Successfully!</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex gap-3">
+                            <Button
+                                variant="outline"
+                                className="flex-1"
+                                onClick={() => {
+                                    // Open in native maps app
+                                    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}&travelmode=${travelMode.toLowerCase()}`
+                                    window.open(url, '_blank')
+                                }}
+                            >
+                                <Navigation className="h-4 w-4 mr-2" />
+                                Open in Maps
+                            </Button>
+                            <Button
+                                className="flex-1 bg-green-600 hover:bg-green-700"
+                                onClick={handleCompleteJob}
+                                disabled={!otpVerified}
+                            >
+                                <CheckCircle className="h-4 w-4 mr-2" />
+                                Mark Complete
+                            </Button>
+                        </div>
                     </div>
                 </div>
             </div>

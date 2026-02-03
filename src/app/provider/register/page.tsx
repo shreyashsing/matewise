@@ -24,7 +24,10 @@ import {
     Clock,
     Loader2,
     Dog,
-    Lightbulb
+    Lightbulb,
+    Upload,
+    FileText,
+    X
 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -132,6 +135,16 @@ export default function ProviderRegistrationPage() {
         service_radius_km: 10
     })
 
+    // Document upload state
+    const [uploadedFiles, setUploadedFiles] = useState<{
+        idDocument?: File
+        businessLicense?: File
+        certifications: File[]
+        insuranceDocument?: File
+    }>({
+        certifications: []
+    })
+
     // Validation
     const isStep1Valid = !!formData.primary_service
     const isStep2Valid = 
@@ -198,17 +211,86 @@ export default function ProviderRegistrationPage() {
         }))
     }
 
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, field: string) => {
+        const files = e.target.files
+        if (!files) return
+
+        if (field === 'certifications') {
+            setUploadedFiles(prev => ({
+                ...prev,
+                certifications: [...prev.certifications, ...Array.from(files)]
+            }))
+        } else {
+            setUploadedFiles(prev => ({
+                ...prev,
+                [field]: files[0]
+            }))
+        }
+    }
+
+    const removeFile = (field: string, index?: number) => {
+        if (field === 'certifications' && index !== undefined) {
+            setUploadedFiles(prev => ({
+                ...prev,
+                certifications: prev.certifications.filter((_, i) => i !== index)
+            }))
+        } else {
+            setUploadedFiles(prev => ({
+                ...prev,
+                [field]: undefined
+            }))
+        }
+    }
+
     const handleSubmit = async () => {
         setIsLoading(true)
         setError(null)
 
         try {
+            // Upload documents first if any
+            const documentUrls: Record<string, any> = {}
+            
+            if (uploadedFiles.idDocument || uploadedFiles.businessLicense || 
+                uploadedFiles.insuranceDocument || uploadedFiles.certifications.length > 0) {
+                
+                const uploadFormData = new FormData()
+                
+                if (uploadedFiles.idDocument) {
+                    uploadFormData.append('id_document', uploadedFiles.idDocument)
+                }
+                if (uploadedFiles.businessLicense) {
+                    uploadFormData.append('business_license', uploadedFiles.businessLicense)
+                }
+                if (uploadedFiles.insuranceDocument) {
+                    uploadFormData.append('insurance_document', uploadedFiles.insuranceDocument)
+                }
+                uploadedFiles.certifications.forEach((cert, index) => {
+                    uploadFormData.append(`certification_${index}`, cert)
+                })
+
+                // Upload to temporary endpoint (will create this)
+                const uploadResponse = await fetch('/api/providers/upload-documents', {
+                    method: 'POST',
+                    body: uploadFormData
+                })
+
+                if (uploadResponse.ok) {
+                    const uploadResult = await uploadResponse.json()
+                    if (uploadResult.success) {
+                        Object.assign(documentUrls, uploadResult.data)
+                    }
+                }
+            }
+
             const response = await fetch('/api/providers/register', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(formData)
+                body: JSON.stringify({
+                    ...formData,
+                    ...documentUrls
+                })
             })
 
             const result = await response.json()
@@ -552,6 +634,158 @@ export default function ProviderRegistrationPage() {
                                     <p className="text-xs text-slate-400">
                                         How far you&apos;re willing to travel for jobs.
                                     </p>
+                                </div>
+
+                                {/* Document Uploads */}
+                                <div className="pt-6 border-t border-slate-200 space-y-4">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <FileText className="h-5 w-5 text-slate-700" />
+                                        <h3 className="font-semibold text-slate-900">Verification Documents</h3>
+                                    </div>
+                                    <p className="text-sm text-slate-500 mb-4">
+                                        Upload documents to verify your identity and business (optional but recommended)
+                                    </p>
+
+                                    {/* ID Document */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="id_document">Government ID / Passport</Label>
+                                        {!uploadedFiles.idDocument ? (
+                                            <label className="flex items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 rounded-lg hover:border-slate-400 cursor-pointer transition-colors bg-slate-50 hover:bg-slate-100">
+                                                <div className="flex flex-col items-center gap-1">
+                                                    <Upload className="h-5 w-5 text-slate-400" />
+                                                    <span className="text-sm text-slate-500">Click to upload ID</span>
+                                                </div>
+                                                <input
+                                                    id="id_document"
+                                                    type="file"
+                                                    accept="image/*,.pdf"
+                                                    className="hidden"
+                                                    onChange={(e) => handleFileUpload(e, 'idDocument')}
+                                                />
+                                            </label>
+                                        ) : (
+                                            <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                                                <div className="flex items-center gap-2">
+                                                    <FileText className="h-4 w-4 text-green-600" />
+                                                    <span className="text-sm text-green-800">{uploadedFiles.idDocument.name}</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeFile('idDocument')}
+                                                    className="text-green-600 hover:text-green-800"
+                                                >
+                                                    <X className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Business License */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="business_license">Business License</Label>
+                                        {!uploadedFiles.businessLicense ? (
+                                            <label className="flex items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 rounded-lg hover:border-slate-400 cursor-pointer transition-colors bg-slate-50 hover:bg-slate-100">
+                                                <div className="flex flex-col items-center gap-1">
+                                                    <Upload className="h-5 w-5 text-slate-400" />
+                                                    <span className="text-sm text-slate-500">Click to upload license</span>
+                                                </div>
+                                                <input
+                                                    id="business_license"
+                                                    type="file"
+                                                    accept="image/*,.pdf"
+                                                    className="hidden"
+                                                    onChange={(e) => handleFileUpload(e, 'businessLicense')}
+                                                />
+                                            </label>
+                                        ) : (
+                                            <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                                                <div className="flex items-center gap-2">
+                                                    <FileText className="h-4 w-4 text-green-600" />
+                                                    <span className="text-sm text-green-800">{uploadedFiles.businessLicense.name}</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeFile('businessLicense')}
+                                                    className="text-green-600 hover:text-green-800"
+                                                >
+                                                    <X className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Insurance Document */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="insurance_document">Insurance Certificate</Label>
+                                        {!uploadedFiles.insuranceDocument ? (
+                                            <label className="flex items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 rounded-lg hover:border-slate-400 cursor-pointer transition-colors bg-slate-50 hover:bg-slate-100">
+                                                <div className="flex flex-col items-center gap-1">
+                                                    <Upload className="h-5 w-5 text-slate-400" />
+                                                    <span className="text-sm text-slate-500">Click to upload insurance</span>
+                                                </div>
+                                                <input
+                                                    id="insurance_document"
+                                                    type="file"
+                                                    accept="image/*,.pdf"
+                                                    className="hidden"
+                                                    onChange={(e) => handleFileUpload(e, 'insuranceDocument')}
+                                                />
+                                            </label>
+                                        ) : (
+                                            <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                                                <div className="flex items-center gap-2">
+                                                    <FileText className="h-4 w-4 text-green-600" />
+                                                    <span className="text-sm text-green-800">{uploadedFiles.insuranceDocument.name}</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeFile('insuranceDocument')}
+                                                    className="text-green-600 hover:text-green-800"
+                                                >
+                                                    <X className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Certifications (Multiple) */}
+                                    <div className="space-y-2">
+                                        <Label htmlFor="certifications">Professional Certifications</Label>
+                                        <label className="flex items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 rounded-lg hover:border-slate-400 cursor-pointer transition-colors bg-slate-50 hover:bg-slate-100">
+                                            <div className="flex flex-col items-center gap-1">
+                                                <Upload className="h-5 w-5 text-slate-400" />
+                                                <span className="text-sm text-slate-500">Click to upload certifications</span>
+                                                <span className="text-xs text-slate-400">You can select multiple files</span>
+                                            </div>
+                                            <input
+                                                id="certifications"
+                                                type="file"
+                                                accept="image/*,.pdf"
+                                                multiple
+                                                className="hidden"
+                                                onChange={(e) => handleFileUpload(e, 'certifications')}
+                                            />
+                                        </label>
+                                        {uploadedFiles.certifications.length > 0 && (
+                                            <div className="space-y-2 mt-2">
+                                                {uploadedFiles.certifications.map((file, index) => (
+                                                    <div key={index} className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                                                        <div className="flex items-center gap-2">
+                                                            <FileText className="h-4 w-4 text-green-600" />
+                                                            <span className="text-sm text-green-800">{file.name}</span>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removeFile('certifications', index)}
+                                                            className="text-green-600 hover:text-green-800"
+                                                        >
+                                                            <X className="h-4 w-4" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>

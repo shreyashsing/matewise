@@ -142,17 +142,6 @@ export function ServiceRequestModal({
         sendRequest()
     }, [sendRequest])
 
-    // Handle accepted - redirect to payment
-    useEffect(() => {
-        if (status === 'accepted' && request) {
-            // Wait a moment to show success, then redirect
-            const timeout = setTimeout(() => {
-                router.push(`/consumer/payment/${request.id}`)
-            }, 1500)
-            return () => clearTimeout(timeout)
-        }
-    }, [status, request, router])
-
     // Render content based on status
     const renderContent = () => {
         switch (status) {
@@ -227,9 +216,22 @@ export function ServiceRequestModal({
                         <p className="text-slate-500 mb-4">
                             {provider.business_name || `${provider.first_name} ${provider.last_name}`} accepted your request
                         </p>
-                        <p className="text-sm text-slate-400">
-                            Redirecting to payment...
-                        </p>
+                        
+                        <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6">
+                            <p className="text-green-800 font-medium mb-1">
+                                ₹649.00 debited from wallet
+                            </p>
+                            <p className="text-green-600 text-sm">
+                                Payment successful via MateWise Wallet
+                            </p>
+                        </div>
+
+                        <Button 
+                            onClick={() => router.push(`/consumer/service-confirmation/${request?.id}`)} 
+                            className="w-full"
+                        >
+                            View Details & OTP
+                        </Button>
                     </>
                 )
 
