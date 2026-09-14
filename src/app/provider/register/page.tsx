@@ -247,50 +247,40 @@ export default function ProviderRegistrationPage() {
         setError(null)
 
         try {
-            // Upload documents first if any
-            const documentUrls: Record<string, any> = {}
-            
-            if (uploadedFiles.idDocument || uploadedFiles.businessLicense || 
-                uploadedFiles.insuranceDocument || uploadedFiles.certifications.length > 0) {
-                
-                const uploadFormData = new FormData()
-                
-                if (uploadedFiles.idDocument) {
-                    uploadFormData.append('id_document', uploadedFiles.idDocument)
-                }
-                if (uploadedFiles.businessLicense) {
-                    uploadFormData.append('business_license', uploadedFiles.businessLicense)
-                }
-                if (uploadedFiles.insuranceDocument) {
-                    uploadFormData.append('insurance_document', uploadedFiles.insuranceDocument)
-                }
-                uploadedFiles.certifications.forEach((cert, index) => {
-                    uploadFormData.append(`certification_${index}`, cert)
-                })
+            // Everything -- form fields and documents -- goes in one request.
+            // Documents can't be uploaded ahead of this: there's no account
+            // (and so no session) until this request creates one.
+            const submission = new FormData()
+            submission.append('primary_service', formData.primary_service)
+            submission.append('first_name', formData.first_name)
+            submission.append('last_name', formData.last_name)
+            submission.append('email', formData.email)
+            submission.append('phone', formData.phone)
+            submission.append('password', formData.password)
+            if (formData.business_name) submission.append('business_name', formData.business_name)
+            if (formData.description) submission.append('description', formData.description)
+            if (formData.years_experience !== undefined) submission.append('years_experience', String(formData.years_experience))
+            if (formData.hourly_rate !== undefined) submission.append('hourly_rate', String(formData.hourly_rate))
+            submission.append('service_radius_km', String(formData.service_radius_km))
+            submission.append('address', JSON.stringify(formData.address))
+            submission.append('location', JSON.stringify(formData.location))
 
-                // Upload to temporary endpoint (will create this)
-                const uploadResponse = await fetch('/api/providers/upload-documents', {
-                    method: 'POST',
-                    body: uploadFormData
-                })
-
-                if (uploadResponse.ok) {
-                    const uploadResult = await uploadResponse.json()
-                    if (uploadResult.success) {
-                        Object.assign(documentUrls, uploadResult.data)
-                    }
-                }
+            if (uploadedFiles.idDocument) {
+                submission.append('id_document', uploadedFiles.idDocument)
             }
+            if (uploadedFiles.businessLicense) {
+                submission.append('business_license', uploadedFiles.businessLicense)
+            }
+            if (uploadedFiles.insuranceDocument) {
+                submission.append('insurance_document', uploadedFiles.insuranceDocument)
+            }
+            uploadedFiles.certifications.forEach((cert, index) => {
+                submission.append(`certification_${index}`, cert)
+            })
 
             const response = await fetch('/api/providers/register', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    ...formData,
-                    ...documentUrls
-                })
+                body: submission
             })
 
             const result = await response.json()

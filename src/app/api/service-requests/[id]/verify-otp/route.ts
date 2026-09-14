@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import type { ApiResponse } from '@/types'
+import { requireOwningProvider } from '@/lib/api-auth'
 
 // Create admin client
 function getSupabaseAdmin() {
@@ -63,6 +64,15 @@ export async function POST(
             } as ApiResponse, { status: 404 })
         }
 
+        // Only the provider this request belongs to may attempt OTP verification
+        const auth = await requireOwningProvider(request, supabaseAdmin, serviceRequest.provider_id)
+        if (!auth.ok) {
+            return NextResponse.json({
+                success: false,
+                error: auth.error
+            } as ApiResponse, { status: auth.status })
+        }
+
         // Check if request is accepted
         if (serviceRequest.status !== 'accepted') {
             return NextResponse.json({
@@ -105,9 +115,11 @@ export async function POST(
             } as ApiResponse, { status: 500 })
         }
 
+        const { otp: _otp, ...responseData } = updatedRequest
+
         return NextResponse.json({
             success: true,
-            data: updatedRequest,
+            data: responseData,
             message: 'OTP verified successfully'
         } as ApiResponse)
 

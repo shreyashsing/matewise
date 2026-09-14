@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__get_advisors",
+      "mcp__supabase__execute_sql",
+      "Bash(grep -n \"otpVerified, setOtpVerified\\\\|jobCompleted, setJobCompleted\\\\|Mark Complete\\\\|disabled={!otpVerified}\" \"D:\\\\matewise\\\\matewise\\\\src\\\\app\\\\provider\\\\navigate\\\\[requestId]\\\\page.tsx\")",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s -o /dev/null -w \"port 3000: %{http_code}\\\\n\" http://localhost:3000/api/health)"
+    ]
+  }
+}

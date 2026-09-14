@@ -19,6 +19,8 @@ import {
     Loader2
 } from 'lucide-react'
 import { Button, Card, CardContent } from '@/components/ui'
+import { useAuth } from '@/hooks/use-auth'
+import { supabase } from '@/lib/supabase'
 
 interface ServiceRequestDetails {
     id: string
@@ -40,16 +42,29 @@ export default function PaymentPage({
 }) {
     const { requestId } = use(params)
     const router = useRouter()
+    const { user, loading: authLoading } = useAuth()
     const [request, setRequest] = useState<ServiceRequestDetails | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [isProcessing, setIsProcessing] = useState(false)
     const [paymentComplete, setPaymentComplete] = useState(false)
 
+    // Require a signed-in consumer
+    useEffect(() => {
+        if (!authLoading && !user) {
+            router.replace(`/consumer/login?redirect=${encodeURIComponent(`/consumer/payment/${requestId}`)}`)
+        }
+    }, [user, authLoading, router, requestId])
+
     // Fetch request details
     useEffect(() => {
+        if (!user) return
+
         const fetchRequest = async () => {
             try {
-                const response = await fetch(`/api/service-requests?id=${requestId}`)
+                const { data: { session } } = await supabase.auth.getSession()
+                const response = await fetch(`/api/service-requests?id=${requestId}`, {
+                    headers: session ? { Authorization: `Bearer ${session.access_token}` } : {}
+                })
                 const result = await response.json()
 
                 if (result.success && result.data) {
@@ -63,7 +78,7 @@ export default function PaymentPage({
         }
 
         fetchRequest()
-    }, [requestId])
+    }, [requestId, user])
 
     // Handle payment (placeholder)
     const handlePayment = async () => {

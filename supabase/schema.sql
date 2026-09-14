@@ -236,14 +236,15 @@ CREATE TYPE request_status AS ENUM (
     'pending',
     'accepted',
     'rejected',
-    'expired'
+    'expired',
+    'completed'
 );
 
 CREATE TABLE IF NOT EXISTS public.service_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
     -- Parties involved
-    consumer_id UUID NOT NULL,
+    consumer_id UUID NOT NULL REFERENCES public.consumers(id) ON DELETE CASCADE,
     provider_id UUID NOT NULL REFERENCES public.providers(id) ON DELETE CASCADE,
     
     -- Consumer info (stored for quick access)
@@ -272,7 +273,8 @@ CREATE TABLE IF NOT EXISTS public.service_requests (
     
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    responded_at TIMESTAMPTZ
+    responded_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ -- set when the provider marks the job done (requires OTP verified first)
 );
 
 -- Index for provider lookups (for real-time notifications)
@@ -559,8 +561,34 @@ CREATE POLICY "Authenticated users can register as consumer"
     ON public.consumers FOR INSERT 
     WITH CHECK (auth.uid() = user_id);
 
+-- Service requests policies
+-- (see supabase/migrations/secure-service-requests-rls.sql and
+-- add-consumer-accounts-to-service-requests.sql for full rationale)
+ALTER TABLE public.service_requests ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Providers can view their own service requests"
+    ON public.service_requests FOR SELECT
+    TO authenticated
+    USING (
+        auth.uid() IN (SELECT user_id FROM public.providers WHERE id = provider_id)
+    );
+
+CREATE POLICY "Consumers can view their own service requests"
+    ON public.service_requests FOR SELECT
+    TO authenticated
+    USING (
+        auth.uid() IN (SELECT user_id FROM public.consumers WHERE id = consumer_id)
+    );
+
+CREATE POLICY "Consumers can create their own service requests"
+    ON public.service_requests FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        auth.uid() IN (SELECT user_id FROM public.consumers WHERE id = consumer_id)
+    );
+
 -- Bookings policies
-CREATE POLICY "Users can view their own bookings" 
+CREATE POLICY "Users can view their own bookings"
     ON public.bookings FOR SELECT 
     USING (
         auth.uid() IN (
@@ -594,3 +622,13 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated;
+
+-- service_requests holds OTPs and consumer PII, and every legitimate
+-- read/write to it already goes through the API routes using the
+-- service-role key (which bypasses grants and RLS entirely). Strip the
+-- blanket grant above back off this one table and replace it with the
+-- least privilege the RLS policy actually needs (must run after the
+-- blanket GRANT ALL above, since that grant would otherwise re-apply
+-- last and win).
+REVOKE ALL ON public.service_requests FROM anon, authenticated;
+GRANT SELECT, INSERT ON public.service_requests TO authenticated;

@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
 import type { ApiResponse, ProviderSearchResult, ServiceCategory } from '@/types'
+import { isWithinSupportedRegion, SUPPORTED_REGION_NAMES } from '@/lib/location-rules'
 
 const VALID_SERVICES: ServiceCategory[] = [
     'cleaning', 'repairs', 'moving', 'gardening', 'plumbing',
@@ -58,11 +59,11 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(response, { status: 400 })
         }
         
-        // Validate coordinates are within UK bounds
-        if (latitude < 49.5 || latitude > 61 || longitude < -8 || longitude > 2) {
+        // Validate coordinates fall within a supported service region
+        if (!isWithinSupportedRegion(latitude, longitude)) {
             const response: ApiResponse = {
                 success: false,
-                error: 'Coordinates must be within United Kingdom'
+                error: `Coordinates must be within a supported region (${SUPPORTED_REGION_NAMES})`
             }
             return NextResponse.json(response, { status: 400 })
         }

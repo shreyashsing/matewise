@@ -175,6 +175,14 @@ export interface Consumer {
     updated_at: string
 }
 
+export interface ConsumerRegistrationData {
+    first_name: string
+    last_name: string
+    email: string
+    phone?: string
+    password: string
+}
+
 // ============================================
 // Search Types
 // ============================================

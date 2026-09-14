@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/use-auth'
 import { Button, Input, Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui'
 import { Mail, Lock, Loader2, AlertCircle, ChevronLeft } from 'lucide-react'
 
-export default function ProviderLoginPage() {
+function ConsumerLoginContent() {
     const router = useRouter()
+    const searchParams = useSearchParams()
     const { signIn, signOut, user, role, loading: authLoading } = useAuth()
 
     const [email, setEmail] = useState('')
@@ -16,21 +17,22 @@ export default function ProviderLoginPage() {
     const [error, setError] = useState<string | null>(null)
     const [isLoading, setIsLoading] = useState(false)
 
-    // If already logged in as a provider, go straight to the dashboard. If
-    // logged in as something else (e.g. a consumer account), that's not a
-    // silent redirect loop -- sign out and say so, so this page can be used
-    // to log into the intended account instead.
+    const redirectTo = searchParams.get('redirect') || '/consumer/dashboard'
+
+    // If already logged in as a consumer, go straight to where they were
+    // headed. If logged in as something else (e.g. a provider account),
+    // sign out and say so instead of silently bouncing through redirects.
     useEffect(() => {
         if (authLoading || !user) return
 
-        if (role === 'provider') {
-            router.replace('/provider/dashboard')
+        if (role === 'consumer') {
+            router.replace(redirectTo)
         } else if (role) {
             signOut().then(() => {
-                setError('That account is not registered as a service provider. Please sign in below with a provider account.')
+                setError('That account is not registered as a consumer. Please sign in below with a consumer account.')
             })
         }
-    }, [user, role, authLoading, router, signOut])
+    }, [user, role, authLoading, router, redirectTo, signOut])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -47,19 +49,17 @@ export default function ProviderLoginPage() {
             }
 
             if (data.user) {
-                // Check if user is a provider
                 const role = data.user.user_metadata?.role
-                if (role !== 'provider') {
-                    setError('This account is not registered as a service provider')
+                if (role !== 'consumer') {
+                    setError('This account is not registered as a consumer')
                     await signOut()
                     setIsLoading(false)
                     return
                 }
 
-                // Redirect to provider dashboard
-                router.push('/provider/dashboard')
+                router.push(redirectTo)
             }
-        } catch (err) {
+        } catch {
             setError('An unexpected error occurred')
             setIsLoading(false)
         }
@@ -91,9 +91,9 @@ export default function ProviderLoginPage() {
             <main className="flex items-center justify-center px-6 py-12">
                 <Card className="w-full max-w-md">
                     <CardHeader className="space-y-1">
-                        <CardTitle className="text-2xl font-bold">Provider Login</CardTitle>
+                        <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
                         <CardDescription>
-                            Sign in to access your provider dashboard
+                            Sign in to request services and track your bookings
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -147,11 +147,7 @@ export default function ProviderLoginPage() {
                             </div>
 
                             {/* Submit Button */}
-                            <Button
-                                type="submit"
-                                className="w-full"
-                                disabled={isLoading}
-                            >
+                            <Button type="submit" className="w-full" disabled={isLoading}>
                                 {isLoading ? (
                                     <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -165,12 +161,12 @@ export default function ProviderLoginPage() {
                             {/* Register Link */}
                             <div className="text-center pt-4 border-t border-slate-200">
                                 <p className="text-sm text-slate-600">
-                                    Don't have an account?{' '}
+                                    Don&apos;t have an account?{' '}
                                     <Link
-                                        href="/provider/register"
+                                        href={`/consumer/register?redirect=${encodeURIComponent(redirectTo)}`}
                                         className="font-medium text-black hover:underline"
                                     >
-                                        Register as a Provider
+                                        Create one
                                     </Link>
                                 </p>
                             </div>
@@ -179,5 +175,17 @@ export default function ProviderLoginPage() {
                 </Card>
             </main>
         </div>
+    )
+}
+
+export default function ConsumerLoginPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+            </div>
+        }>
+            <ConsumerLoginContent />
+        </Suspense>
     )
 }

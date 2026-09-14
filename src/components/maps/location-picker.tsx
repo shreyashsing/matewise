@@ -10,6 +10,7 @@ import { GoogleMap, Marker, Autocomplete } from '@react-google-maps/api'
 import { Input } from '@/components/ui'
 import { MapPin, Crosshair, Search } from 'lucide-react'
 import type { GeoLocation, Address } from '@/types'
+import { AUTOCOMPLETE_COUNTRY_CODES } from '@/lib/location-rules'
 
 interface LocationPickerProps {
     onLocationSelect: (location: GeoLocation, address: Address) => void
@@ -117,7 +118,7 @@ export function LocationPicker({
             city: city,
             postcode: postcode,
             county: getComponent(['administrative_area_level_2']),
-            country: getComponent(['country']) || 'United Kingdom',
+            country: getComponent(['country']) || '',
             formatted_address: result.formatted_address
         }
     }
@@ -205,7 +206,7 @@ export function LocationPicker({
                 <Autocomplete
                     onLoad={onAutocompleteLoad}
                     onPlaceChanged={onPlaceSelect}
-                    restrictions={{ country: 'gb' }}
+                    restrictions={{ country: AUTOCOMPLETE_COUNTRY_CODES }}
                 >
                     <div className="relative">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />

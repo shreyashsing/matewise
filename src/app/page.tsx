@@ -31,8 +31,8 @@ export default function SelectionPage() {
 
                 <div className="grid md:grid-cols-2 gap-6 w-full max-w-4xl">
                     {/* Consumer Selection */}
-                    <Link href="/consumer/services" className="group">
-                        <Card className="h-full relative overflow-hidden border-2 border-transparent hover:border-black transition-all duration-300 hover:shadow-2xl hover:scale-[1.02] active:scale-[0.98] cursor-pointer bg-slate-50 group-hover:bg-white">
+                    <Card className="h-full relative overflow-hidden border-2 border-transparent hover:border-black transition-all duration-300 hover:shadow-2xl cursor-pointer bg-slate-50 group">
+                        <Link href="/consumer/services" className="block">
                             <CardHeader>
                                 <div className="h-14 w-14 rounded-full bg-slate-200 group-hover:bg-black group-hover:text-white transition-colors flex items-center justify-center mb-4">
                                     <Search className="h-7 w-7" />
@@ -42,15 +42,26 @@ export default function SelectionPage() {
                                     I need help with home maintenance, cleaning, or errands.
                                 </CardDescription>
                             </CardHeader>
-                            <CardContent>
-                                <div className="flex items-center text-sm font-medium text-slate-900 opacity-60 group-hover:opacity-100 transition-opacity mt-4">
-                                    Get started <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                                </div>
-                            </CardContent>
-                            {/* Decorative gradient blob */}
-                            <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-gradient-to-br from-slate-200 to-transparent rounded-full opacity-0 group-hover:opacity-50 blur-2xl transition-opacity pointer-events-none" />
-                        </Card>
-                    </Link>
+                        </Link>
+                        <CardContent>
+                            <Link
+                                href="/consumer/services"
+                                className="inline-flex items-center justify-center w-full bg-black text-white hover:bg-slate-800 mb-3 h-10 px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                            >
+                                Get started <ArrowRight className="ml-2 h-4 w-4" />
+                            </Link>
+                            <div className="text-center">
+                                <Link
+                                    href="/consumer/login"
+                                    className="text-xs text-slate-500 hover:text-black transition-colors inline-block"
+                                >
+                                    Already have an account? Sign in →
+                                </Link>
+                            </div>
+                        </CardContent>
+                        {/* Decorative gradient blob */}
+                        <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-gradient-to-br from-slate-200 to-transparent rounded-full opacity-0 group-hover:opacity-50 blur-2xl transition-opacity pointer-events-none" />
+                    </Card>
 
                     {/* Provider Selection */}
                     <Card className="h-full relative overflow-hidden border-2 border-transparent hover:border-black transition-all duration-300 hover:shadow-2xl cursor-pointer bg-black text-white group">

@@ -4,14 +4,17 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { 
-    User, 
+import {
+    User,
     LogOut,
     Clock,
     Loader2,
     Bell,
     CheckCircle,
-    XCircle
+    XCircle,
+    History,
+    MapPin,
+    Navigation as NavigationIcon
 } from 'lucide-react'
 import { Button, Card, CardContent } from '@/components/ui'
 import { useAuth } from '@/hooks/use-auth'
@@ -25,6 +28,21 @@ interface ServiceRequest {
     status: 'pending' | 'accepted' | 'rejected' | 'expired'
     created_at: string
     expires_at: string
+}
+
+type RequestHistoryStatus = 'accepted' | 'rejected' | 'expired' | 'completed'
+
+interface ServiceRequestHistoryItem {
+    id: string
+    consumer_name: string
+    service_category: string
+    service_address?: string
+    distance_km?: number
+    status: 'pending' | RequestHistoryStatus
+    otp_verified: boolean
+    created_at: string
+    responded_at?: string
+    completed_at?: string
 }
 
 export default function ProviderDashboard() {
@@ -44,6 +62,8 @@ export default function ProviderDashboard() {
     const [isSigningOut, setIsSigningOut] = useState(false)
     const [pendingRequests, setPendingRequests] = useState<ServiceRequest[]>([])
     const [processingRequest, setProcessingRequest] = useState<string | null>(null)
+    const [historyRequests, setHistoryRequests] = useState<(ServiceRequestHistoryItem & { status: RequestHistoryStatus })[]>([])
+    const [isLoadingHistory, setIsLoadingHistory] = useState(true)
 
     // Redirect if not authenticated or not a provider
     useEffect(() => {
@@ -150,13 +170,55 @@ export default function ProviderDashboard() {
         }
     }, [providerData?.id])
 
+    // Fetch job history (accepted/completed/rejected/expired requests)
+    const fetchHistory = useCallback(async () => {
+        if (!providerData?.id) return
+
+        setIsLoadingHistory(true)
+        try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) return
+
+            const response = await fetch('/api/service-requests?scope=provider', {
+                headers: { Authorization: `Bearer ${session.access_token}` }
+            })
+            const result = await response.json()
+
+            if (result.success && result.data) {
+                setHistoryRequests(
+                    (result.data as ServiceRequestHistoryItem[]).filter(
+                        (r): r is ServiceRequestHistoryItem & { status: RequestHistoryStatus } => r.status !== 'pending'
+                    )
+                )
+            }
+        } catch (err) {
+            console.error('Failed to fetch job history:', err)
+        } finally {
+            setIsLoadingHistory(false)
+        }
+    }, [providerData?.id])
+
+    useEffect(() => {
+        fetchHistory()
+    }, [fetchHistory])
+
     // Handle accept/reject request
     const handleRequestResponse = useCallback(async (requestId: string, action: 'accept' | 'reject') => {
         setProcessingRequest(requestId)
         try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                console.error('No active session; cannot respond to request')
+                setProcessingRequest(null)
+                return
+            }
+
             const response = await fetch(`/api/service-requests/${requestId}/respond`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`
+                },
                 body: JSON.stringify({ action })
             })
 
@@ -174,13 +236,15 @@ export default function ProviderDashboard() {
             // If accepted, redirect to navigation page
             if (action === 'accept') {
                 router.push(`/provider/navigate/${requestId}`)
+            } else {
+                fetchHistory()
             }
         } catch (err) {
             console.error('Failed to respond to request:', err)
         } finally {
             setProcessingRequest(null)
         }
-    }, [router])
+    }, [router, fetchHistory])
 
     const handleSignOut = async () => {
         setIsSigningOut(true)
@@ -288,7 +352,7 @@ export default function ProviderDashboard() {
 
                 {/* Empty State when no requests */}
                 {pendingRequests.length === 0 && (
-                    <Card>
+                    <Card className="mb-8">
                         <CardContent className="p-12 text-center">
                             <div className="h-16 w-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                                 <Bell className="h-8 w-8 text-slate-400" />
@@ -300,8 +364,89 @@ export default function ProviderDashboard() {
                         </CardContent>
                     </Card>
                 )}
+
+                {/* Job History */}
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                        <History className="h-5 w-5 text-slate-600" />
+                        <h2 className="text-xl font-bold text-slate-900">Job History</h2>
+                    </div>
+
+                    {isLoadingHistory ? (
+                        <div className="flex justify-center py-10">
+                            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                        </div>
+                    ) : historyRequests.length === 0 ? (
+                        <Card>
+                            <CardContent className="p-10 text-center">
+                                <p className="text-sm text-slate-500">
+                                    Jobs you&apos;ve accepted, completed, or declined will show up here.
+                                </p>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <div className="space-y-3">
+                            {historyRequests.map(item => (
+                                <JobHistoryRow key={item.id} item={item} />
+                            ))}
+                        </div>
+                    )}
+                </div>
             </main>
         </div>
+    )
+}
+
+/**
+ * Job History Row
+ * One past/in-progress request: consumer, service, status, and a resume
+ * link back into navigation if it's accepted but not yet completed.
+ */
+function JobHistoryRow({ item }: { item: ServiceRequestHistoryItem & { status: RequestHistoryStatus } }) {
+    const statusStyles: Record<RequestHistoryStatus, string> = {
+        completed: 'bg-green-100 text-green-800',
+        accepted: 'bg-blue-100 text-blue-800',
+        rejected: 'bg-red-100 text-red-800',
+        expired: 'bg-slate-100 text-slate-600'
+    }
+
+    const statusLabels: Record<RequestHistoryStatus, string> = {
+        completed: 'Completed',
+        accepted: 'In Progress',
+        rejected: 'Declined',
+        expired: 'Expired'
+    }
+
+    const dateLabel = new Date(item.completed_at || item.responded_at || item.created_at)
+        .toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+    return (
+        <Card>
+            <CardContent className="p-4 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-semibold text-slate-900 truncate">{item.consumer_name}</h3>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${statusStyles[item.status]}`}>
+                            {statusLabels[item.status]}
+                        </span>
+                    </div>
+                    <p className="text-sm text-slate-500 capitalize truncate">
+                        {item.service_category.replace('_', ' ')}
+                        {item.service_address ? ` · ${item.service_address}` : ''}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">{dateLabel}</p>
+                </div>
+
+                {item.status === 'accepted' && (
+                    <Link href={`/provider/navigate/${item.id}`} className="flex-shrink-0">
+                        <Button size="sm" variant="outline">
+                            <NavigationIcon className="h-4 w-4 mr-1" />
+                            Resume
+                        </Button>
+                    </Link>
+                )}
+            </CardContent>
+        </Card>
     )
 }
 

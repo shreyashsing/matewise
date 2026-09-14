@@ -8,7 +8,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
 import {
     Loader2,
     Clock,
@@ -18,13 +17,13 @@ import {
     X
 } from 'lucide-react'
 import { Button, Card } from '@/components/ui'
+import { supabase } from '@/lib/supabase'
 import type { ProviderSearchResult, ServiceCategory, GeoLocation } from '@/types'
 
 interface ServiceRequestModalProps {
     provider: ProviderSearchResult
     serviceCategory: ServiceCategory
     consumerName: string
-    consumerId?: string
     consumerLocation: GeoLocation
     onClose: () => void
 }
@@ -44,7 +43,6 @@ export function ServiceRequestModal({
     provider,
     serviceCategory,
     consumerName,
-    consumerId,
     consumerLocation,
     onClose
 }: ServiceRequestModalProps) {
@@ -55,16 +53,25 @@ export function ServiceRequestModal({
     const [error, setError] = useState<string | null>(null)
     const hasSentRequest = useRef(false) // Prevent duplicate sends in StrictMode
 
-    // Send service request
+    // Send service request. The caller must be a signed-in consumer -- the
+    // API derives who's making the request from their session, not from
+    // anything passed in the body (consumerName here is display-only, used
+    // while waiting for the response).
     const sendRequest = useCallback(async () => {
         try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                throw new Error('Please log in to request a service')
+            }
+
             const response = await fetch('/api/service-requests', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`
+                },
                 body: JSON.stringify({
                     provider_id: provider.id,
-                    consumer_id: consumerId || crypto.randomUUID(), // Generate proper UUID if not logged in
-                    consumer_name: consumerName || 'Anonymous Consumer',
                     service_category: serviceCategory,
                     // Consumer's location (where provider needs to go)
                     service_latitude: consumerLocation.latitude,
@@ -88,11 +95,14 @@ export function ServiceRequestModal({
             setStatus('expired')
             return null
         }
-    }, [provider.id, consumerId, consumerName, serviceCategory])
+    }, [provider.id, serviceCategory, consumerLocation])
 
-    // Subscribe to realtime updates
+    // Subscribe to realtime updates. Consumers are real, signed-in accounts
+    // now, and RLS scopes service_requests SELECT to rows the caller's own
+    // consumer/provider record actually owns -- so this only ever receives
+    // this consumer's own request, not anyone else's.
     useEffect(() => {
-        if (!request || !supabase) return
+        if (!request?.id) return
 
         const channel = supabase
             .channel(`service-request-${request.id}`)
@@ -115,7 +125,7 @@ export function ServiceRequestModal({
         return () => {
             supabase.removeChannel(channel)
         }
-    }, [request])
+    }, [request?.id])
 
     // Countdown timer
     useEffect(() => {

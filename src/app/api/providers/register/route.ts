@@ -1,21 +1,32 @@
 /**
  * Provider Registration API Route
  * POST /api/providers/register
+ *
+ * Accepts multipart/form-data: the same registration fields as before, plus
+ * optional verification documents (id_document, business_license,
+ * insurance_document, certification_0..N). Documents are uploaded here,
+ * after the account is created, using the service-role client -- not a
+ * separate authenticated endpoint, because there's no session to check at
+ * this point in the flow: the account doesn't exist yet until this request
+ * creates it. See src/app/api/providers/upload-documents/route.ts for the
+ * (now properly authenticated) endpoint an already-registered provider would
+ * use to replace a document later.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import type { ApiResponse, ProviderRegistrationData, ServiceCategory } from '@/types'
+import type { ApiResponse, ServiceCategory, Address, GeoLocation } from '@/types'
+import { isValidPhone, isValidPostcode, isWithinSupportedRegion, SUPPORTED_REGION_NAMES } from '@/lib/location-rules'
 
 // Create admin client lazily to avoid build errors
 function getSupabaseAdmin(): SupabaseClient | null {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    
+
     if (!url || !key) {
         return null
     }
-    
+
     return createClient(url, key, {
         auth: {
             autoRefreshToken: false,
@@ -30,28 +41,64 @@ function isValidEmail(email: string): boolean {
     return emailRegex.test(email)
 }
 
-function isValidPhone(phone: string): boolean {
-    // UK phone number validation (simplified)
-    const phoneRegex = /^(?:(?:\+44)|0)\d{10}$/
-    return phoneRegex.test(phone.replace(/\s/g, ''))
-}
-
-function isValidPostcode(postcode: string): boolean {
-    // UK postcode validation
-    const postcodeRegex = /^[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}$/i
-    return postcodeRegex.test(postcode.trim())
-}
-
 const VALID_SERVICES: ServiceCategory[] = [
     'cleaning', 'repairs', 'moving', 'gardening', 'plumbing',
     'painting', 'tutoring', 'care', 'electrical', 'pets'
 ]
 
+const ALLOWED_DOCUMENT_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf']
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024 // 10MB, matches the storage bucket's own limit
+
+// How long a saved document link stays viewable before it 403s. This is a
+// stopgap: a real admin-review feature should mint a fresh signed URL on
+// demand rather than rely on the one saved at upload time indefinitely.
+const DOCUMENT_URL_TTL_SECONDS = 60 * 60 * 24 * 7 // 7 days
+
+async function uploadDocument(
+    supabaseAdmin: SupabaseClient,
+    userId: string,
+    fieldName: string,
+    file: File
+): Promise<string | null> {
+    if (!ALLOWED_DOCUMENT_TYPES.includes(file.type)) {
+        console.warn(`Skipping ${fieldName}: unsupported file type "${file.type}"`)
+        return null
+    }
+    if (file.size > MAX_DOCUMENT_BYTES) {
+        console.warn(`Skipping ${fieldName}: file too large (${file.size} bytes)`)
+        return null
+    }
+
+    const extension = file.name.split('.').pop()
+    const path = `${userId}/${fieldName}_${Date.now()}.${extension}`
+
+    const { error: uploadError } = await supabaseAdmin.storage
+        .from('provider-documents')
+        .upload(path, file, { contentType: file.type, upsert: false })
+
+    if (uploadError) {
+        console.error(`${fieldName} upload error:`, uploadError)
+        return null
+    }
+
+    // The bucket is private -- getPublicUrl() would return a URL that always
+    // 403s. A signed URL actually works.
+    const { data: signedUrlData, error: signError } = await supabaseAdmin.storage
+        .from('provider-documents')
+        .createSignedUrl(path, DOCUMENT_URL_TTL_SECONDS)
+
+    if (signError || !signedUrlData) {
+        console.error(`${fieldName} sign error:`, signError)
+        return null
+    }
+
+    return signedUrlData.signedUrl
+}
+
 export async function POST(request: NextRequest) {
     try {
-        // Get Supabase admin client
         const supabaseAdmin = getSupabaseAdmin()
-        
+
         if (!supabaseAdmin) {
             const response: ApiResponse = {
                 success: false,
@@ -59,58 +106,82 @@ export async function POST(request: NextRequest) {
             }
             return NextResponse.json(response, { status: 503 })
         }
-        
-        const body = await request.json() as ProviderRegistrationData
+
+        const formData = await request.formData()
+
+        const getText = (key: string) => {
+            const value = formData.get(key)
+            return typeof value === 'string' ? value : ''
+        }
+        const getJson = <T,>(key: string): T | null => {
+            const raw = getText(key)
+            if (!raw) return null
+            try {
+                return JSON.parse(raw) as T
+            } catch {
+                return null
+            }
+        }
+
+        const primary_service = getText('primary_service') as ServiceCategory
+        const first_name = getText('first_name')
+        const last_name = getText('last_name')
+        const email = getText('email')
+        const phone = getText('phone')
+        const password = getText('password')
+        const business_name = getText('business_name')
+        const description = getText('description')
+        const years_experience = getText('years_experience')
+        const hourly_rate = getText('hourly_rate')
+        const service_radius_km = getText('service_radius_km')
+        const address = getJson<Address>('address')
+        const location = getJson<GeoLocation>('location')
 
         // Validate required fields
         const errors: string[] = []
 
-        if (!body.primary_service || !VALID_SERVICES.includes(body.primary_service)) {
+        if (!primary_service || !VALID_SERVICES.includes(primary_service)) {
             errors.push('Invalid service category')
         }
 
-        if (!body.first_name?.trim()) {
+        if (!first_name?.trim()) {
             errors.push('First name is required')
         }
 
-        if (!body.last_name?.trim()) {
+        if (!last_name?.trim()) {
             errors.push('Last name is required')
         }
 
-        if (!body.email || !isValidEmail(body.email)) {
+        if (!email || !isValidEmail(email)) {
             errors.push('Valid email is required')
         }
 
-        if (!body.phone || !isValidPhone(body.phone)) {
-            errors.push('Valid UK phone number is required')
+        if (!phone || !isValidPhone(phone)) {
+            errors.push(`Valid phone number is required (${SUPPORTED_REGION_NAMES})`)
         }
 
-        if (!body.password || body.password.length < 8) {
+        if (!password || password.length < 8) {
             errors.push('Password must be at least 8 characters')
         }
 
-        if (!body.address?.street?.trim()) {
+        if (!address?.street?.trim()) {
             errors.push('Street address is required')
         }
 
-        if (!body.address?.city?.trim()) {
+        if (!address?.city?.trim()) {
             errors.push('City is required')
         }
 
-        if (!body.address?.postcode || !isValidPostcode(body.address.postcode)) {
-            errors.push('Valid UK postcode is required')
+        if (!address?.postcode || !isValidPostcode(address.postcode)) {
+            errors.push(`Valid postcode is required (${SUPPORTED_REGION_NAMES})`)
         }
 
-        if (!body.location?.latitude || !body.location?.longitude) {
+        if (!location?.latitude || !location?.longitude) {
             errors.push('Location coordinates are required')
         }
 
-        // Validate coordinates are within UK bounds (approximately)
-        if (body.location) {
-            const { latitude, longitude } = body.location
-            if (latitude < 49.5 || latitude > 61 || longitude < -8 || longitude > 2) {
-                errors.push('Location must be within United Kingdom')
-            }
+        if (location && !isWithinSupportedRegion(location.latitude, location.longitude)) {
+            errors.push(`Location must be within a supported region (${SUPPORTED_REGION_NAMES})`)
         }
 
         if (errors.length > 0) {
@@ -123,12 +194,12 @@ export async function POST(request: NextRequest) {
 
         // Create auth user
         const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-            email: body.email,
-            password: body.password,
+            email,
+            password,
             email_confirm: true, // Auto-confirm for now
             user_metadata: {
-                first_name: body.first_name,
-                last_name: body.last_name,
+                first_name,
+                last_name,
                 role: 'provider'
             }
         })
@@ -144,30 +215,60 @@ export async function POST(request: NextRequest) {
 
         const userId = authData.user.id
 
+        // Upload verification documents now that we have a userId to file
+        // them under. Best-effort: a failed/missing document never blocks
+        // registration, matching the previous behaviour.
+        const idDocumentFile = formData.get('id_document')
+        const businessLicenseFile = formData.get('business_license')
+        const insuranceDocumentFile = formData.get('insurance_document')
+
+        const [id_document_url, business_license_url, insurance_document_url] = await Promise.all([
+            idDocumentFile instanceof File ? uploadDocument(supabaseAdmin, userId, 'id_document', idDocumentFile) : null,
+            businessLicenseFile instanceof File ? uploadDocument(supabaseAdmin, userId, 'business_license', businessLicenseFile) : null,
+            insuranceDocumentFile instanceof File ? uploadDocument(supabaseAdmin, userId, 'insurance_document', insuranceDocumentFile) : null
+        ])
+
+        const certificationUrls: string[] = []
+        let certIndex = 0
+        while (true) {
+            const certFile = formData.get(`certification_${certIndex}`)
+            if (!(certFile instanceof File)) break
+            const url = await uploadDocument(supabaseAdmin, userId, `certification_${certIndex}`, certFile)
+            if (url) certificationUrls.push(url)
+            certIndex++
+        }
+
+        const hasDocuments = !!(id_document_url || business_license_url || insurance_document_url || certificationUrls.length > 0)
+
         // Create provider profile with PostGIS point
         const { data: provider, error: providerError } = await supabaseAdmin
             .from('providers')
             .insert({
                 user_id: userId,
-                first_name: body.first_name.trim(),
-                last_name: body.last_name.trim(),
-                email: body.email.toLowerCase(),
-                phone: body.phone.replace(/\s/g, ''),
-                business_name: body.business_name?.trim() || null,
-                description: body.description?.trim() || null,
-                primary_service: body.primary_service,
+                first_name: first_name.trim(),
+                last_name: last_name.trim(),
+                email: email.toLowerCase(),
+                phone: phone.replace(/\s/g, ''),
+                business_name: business_name?.trim() || null,
+                description: description?.trim() || null,
+                primary_service,
                 additional_services: [],
-                address_street: body.address.street.trim(),
-                address_city: body.address.city.trim(),
-                address_postcode: body.address.postcode.toUpperCase().trim(),
-                address_county: body.address.county?.trim() || null,
-                address_country: body.address.country || 'United Kingdom',
-                formatted_address: body.address.formatted_address || null,
-                latitude: body.location.latitude,
-                longitude: body.location.longitude,
-                service_radius_km: body.service_radius_km || 10,
-                years_experience: body.years_experience || null,
-                hourly_rate: body.hourly_rate || null,
+                address_street: address!.street.trim(),
+                address_city: address!.city.trim(),
+                address_postcode: address!.postcode.toUpperCase().trim(),
+                address_county: address!.county?.trim() || null,
+                address_country: address!.country || 'United Kingdom',
+                formatted_address: address!.formatted_address || null,
+                latitude: location!.latitude,
+                longitude: location!.longitude,
+                service_radius_km: service_radius_km ? Number(service_radius_km) : 10,
+                years_experience: years_experience ? Number(years_experience) : null,
+                hourly_rate: hourly_rate ? Number(hourly_rate) : null,
+                id_document_url,
+                business_license_url,
+                insurance_document_url,
+                certification_urls: certificationUrls,
+                documents_uploaded_at: hasDocuments ? new Date().toISOString() : null,
                 status: 'active',
                 verification_status: 'pending',
                 is_available: true
@@ -178,7 +279,7 @@ export async function POST(request: NextRequest) {
         if (providerError) {
             // Rollback: delete the auth user if provider creation fails
             await supabaseAdmin.auth.admin.deleteUser(userId)
-            
+
             console.error('Provider error:', providerError)
             const response: ApiResponse = {
                 success: false,
@@ -191,10 +292,10 @@ export async function POST(request: NextRequest) {
         // This may use a database function or trigger in production
         const { error: locationError } = await supabaseAdmin.rpc('update_provider_location', {
             provider_id: provider.id,
-            lat: body.location.latitude,
-            lng: body.location.longitude
+            lat: location!.latitude,
+            lng: location!.longitude
         })
-        
+
         if (locationError) {
             // Location update via RPC failed, location will be updated via trigger
             console.log('RPC location update skipped (may use trigger instead)')
@@ -205,12 +306,12 @@ export async function POST(request: NextRequest) {
             .from('profiles')
             .insert({
                 id: userId,
-                email: body.email.toLowerCase(),
-                name: `${body.first_name} ${body.last_name}`,
+                email: email.toLowerCase(),
+                name: `${first_name} ${last_name}`,
                 role: 'provider',
-                phone: body.phone.replace(/\s/g, '')
+                phone: phone.replace(/\s/g, '')
             })
-        
+
         if (profileError) {
             console.error('Profile creation error:', profileError)
         }
@@ -220,7 +321,7 @@ export async function POST(request: NextRequest) {
             data: {
                 provider_id: provider.id,
                 user_id: userId,
-                email: body.email
+                email
             },
             message: 'Provider registered successfully'
         }

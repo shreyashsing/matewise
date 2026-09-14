@@ -29,9 +29,11 @@ import {
 import { Button, Card, CardContent, Input } from '@/components/ui'
 import { GoogleMapsProvider } from '@/components/maps'
 import { useAuth } from '@/hooks/use-auth'
+import { supabase } from '@/lib/supabase'
 
 interface ServiceRequestDetails {
     id: string
+    provider_id: string
     consumer_name: string
     consumer_phone?: string
     service_category: string
@@ -40,7 +42,6 @@ interface ServiceRequestDetails {
     service_address?: string
     distance_km?: number
     status: string
-    otp?: string
     otp_verified?: boolean
 }
 
@@ -84,6 +85,7 @@ export default function ProviderNavigatePage({
     const [routeInfo, setRouteInfo] = useState<{ duration: string; distance: string } | null>(null)
     const [isRecalculating, setIsRecalculating] = useState(false)
     const [jobCompleted, setJobCompleted] = useState(false)
+    const [isCompleting, setIsCompleting] = useState(false)
     const [isMapLoaded, setIsMapLoaded] = useState(false)
     const [otpInput, setOtpInput] = useState('')
     const [otpVerifying, setOtpVerifying] = useState(false)
@@ -95,11 +97,23 @@ export default function ProviderNavigatePage({
     const watchIdRef = useRef<number | null>(null)
     const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null)
 
+    // Require a signed-in provider
+    useEffect(() => {
+        if (!authLoading && !user) {
+            router.replace('/provider/login')
+        }
+    }, [user, authLoading, router])
+
     // Fetch service request details
     useEffect(() => {
+        if (!user) return
+
         const fetchRequest = async () => {
             try {
-                const response = await fetch(`/api/service-requests?id=${requestId}`)
+                const { data: { session } } = await supabase.auth.getSession()
+                const response = await fetch(`/api/service-requests?id=${requestId}`, {
+                    headers: session ? { Authorization: `Bearer ${session.access_token}` } : {}
+                })
                 const result = await response.json()
 
                 if (result.success && result.data) {
@@ -131,7 +145,7 @@ export default function ProviderNavigatePage({
         }
 
         fetchRequest()
-    }, [requestId])
+    }, [requestId, user])
 
     // Get provider's current live location for tracking (optional)
     useEffect(() => {
@@ -263,11 +277,39 @@ export default function ProviderNavigatePage({
             setOtpError('Please verify OTP before marking complete')
             return
         }
-        setJobCompleted(true)
-        // In a real app, you'd update the request status to 'completed' via API
-        setTimeout(() => {
-            router.push('/provider/dashboard')
-        }, 2000)
+
+        setIsCompleting(true)
+        setOtpError(null)
+
+        try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                setOtpError('Your session has expired. Please log in again.')
+                setIsCompleting(false)
+                return
+            }
+
+            const response = await fetch(`/api/service-requests/${requestId}/complete`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${session.access_token}` }
+            })
+            const result = await response.json()
+
+            if (!result.success) {
+                setOtpError(result.error || 'Failed to mark job as complete')
+                setIsCompleting(false)
+                return
+            }
+
+            setJobCompleted(true)
+            setTimeout(() => {
+                router.push('/provider/dashboard')
+            }, 2000)
+        } catch (err) {
+            console.error('Complete job error:', err)
+            setOtpError('Failed to mark job as complete')
+            setIsCompleting(false)
+        }
     }
 
     // Verify OTP
@@ -281,9 +323,19 @@ export default function ProviderNavigatePage({
         setOtpError(null)
 
         try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                setOtpError('Your session has expired. Please log in again.')
+                setOtpVerifying(false)
+                return
+            }
+
             const response = await fetch(`/api/service-requests/${requestId}/verify-otp`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`
+                },
                 body: JSON.stringify({ otp: otpInput })
             })
 
@@ -536,6 +588,9 @@ export default function ProviderNavigatePage({
                                     <CheckCircle className="h-5 w-5" />
                                     <span className="font-semibold">OTP Verified Successfully!</span>
                                 </div>
+                                {otpError && (
+                                    <p className="text-sm text-red-600 mt-2">{otpError}</p>
+                                )}
                             </div>
                         )}
 
@@ -555,9 +610,13 @@ export default function ProviderNavigatePage({
                             <Button
                                 className="flex-1 bg-green-600 hover:bg-green-700"
                                 onClick={handleCompleteJob}
-                                disabled={!otpVerified}
+                                disabled={!otpVerified || isCompleting}
                             >
-                                <CheckCircle className="h-4 w-4 mr-2" />
+                                {isCompleting ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                    <CheckCircle className="h-4 w-4 mr-2" />
+                                )}
                                 Mark Complete
                             </Button>
                         </div>

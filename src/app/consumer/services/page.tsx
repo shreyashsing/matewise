@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import Link from 'next/link'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { useAuth } from '@/hooks/use-auth'
 import {
     ChevronLeft,
     MapPin,
@@ -105,7 +106,24 @@ function LoadingState() {
 // Main content component that uses searchParams
 function ServiceSearchContent() {
     const searchParams = useSearchParams()
+    const router = useRouter()
+    const pathname = usePathname()
     const serviceParam = searchParams.get('service') as ServiceCategory | null
+
+    const { user, loading: authLoading, role } = useAuth()
+
+    // Require a signed-in consumer
+    useEffect(() => {
+        if (authLoading) return
+        if (!user) {
+            const redirect = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+            router.replace(`/consumer/login?redirect=${encodeURIComponent(redirect)}`)
+            return
+        }
+        if (role && role !== 'consumer') {
+            router.replace('/')
+        }
+    }, [user, authLoading, role, router, pathname, searchParams])
 
     // State
     const [providers, setProviders] = useState<ProviderSearchResult[]>([])
@@ -207,6 +225,14 @@ function ServiceSearchContent() {
         setSelectedService(service)
     }
 
+    if (authLoading || !user || (role && role !== 'consumer')) {
+        return (
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+            </div>
+        )
+    }
+
     // If no service selected, show service selection page
     if (!selectedService && !serviceParam) {
         return (
@@ -214,14 +240,19 @@ function ServiceSearchContent() {
                 {/* Header */}
                 <header className="px-6 py-6 flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-md z-10 border-b border-slate-100">
                     <div className="flex items-center gap-4">
-                        <Link href="/">
+                        <Link href="/consumer/dashboard">
                             <Button variant="ghost" size="icon" className="rounded-full hover:bg-slate-100">
                                 <ChevronLeft className="h-5 w-5" />
                             </Button>
                         </Link>
                         <span className="text-xl font-bold tracking-tight">MateWise</span>
                     </div>
-                    <div className="h-8 w-8 bg-black rounded-lg flex items-center justify-center text-white font-bold text-lg">M</div>
+                    <Link
+                        href="/consumer/dashboard"
+                        className="text-sm font-medium text-slate-600 hover:text-black transition-colors"
+                    >
+                        My Bookings
+                    </Link>
                 </header>
 
                 <main className="p-6 md:p-12 max-w-7xl mx-auto animate-in fade-in duration-700 slide-in-from-bottom-4">
@@ -307,6 +338,13 @@ function ServiceSearchContent() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                        <Link
+                            href="/consumer/dashboard"
+                            className="hidden sm:inline text-sm font-medium text-slate-600 hover:text-black transition-colors mr-1"
+                        >
+                            My Bookings
+                        </Link>
+
                         {/* View toggle */}
                         <div className="hidden sm:flex bg-slate-100 rounded-lg p-1">
                             <button
@@ -538,11 +576,15 @@ function ServiceSearchContent() {
             )}
 
             {/* Service Request Modal */}
-            {requestingProvider && selectedService && userLocation && (
+            {requestingProvider && selectedService && userLocation && user && (
                 <ServiceRequestModal
                     provider={requestingProvider}
                     serviceCategory={selectedService}
-                    consumerName="Guest User"
+                    consumerName={
+                        [user.user_metadata?.first_name, user.user_metadata?.last_name]
+                            .filter(Boolean)
+                            .join(' ') || user.email || 'Consumer'
+                    }
                     consumerLocation={userLocation}
                     onClose={() => setRequestingProvider(null)}
                 />

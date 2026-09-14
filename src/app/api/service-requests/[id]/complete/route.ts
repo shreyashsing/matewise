@@ -1,6 +1,6 @@
 /**
- * Service Request Response API Route
- * PATCH /api/service-requests/[id]/respond - Accept or reject a request
+ * Service Request Completion API Route
+ * PATCH /api/service-requests/[id]/complete - Provider marks a job as done
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -8,15 +8,14 @@ import { createClient } from '@supabase/supabase-js'
 import type { ApiResponse } from '@/types'
 import { requireOwningProvider } from '@/lib/api-auth'
 
-// Create admin client
 function getSupabaseAdmin() {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    
+
     if (!url || !key) {
         return null
     }
-    
+
     return createClient(url, key, {
         auth: {
             autoRefreshToken: false,
@@ -31,7 +30,7 @@ export async function PATCH(
 ) {
     try {
         const supabaseAdmin = getSupabaseAdmin()
-        
+
         if (!supabaseAdmin) {
             return NextResponse.json({
                 success: false,
@@ -40,32 +39,22 @@ export async function PATCH(
         }
 
         const { id } = await params
-        const body = await request.json()
-        const { action } = body // 'accept' or 'reject'
 
-        if (!action || !['accept', 'reject'].includes(action)) {
-            return NextResponse.json({
-                success: false,
-                error: 'Invalid action. Must be "accept" or "reject"'
-            } as ApiResponse, { status: 400 })
-        }
-
-        // Get the current request
-        const { data: currentRequest, error: fetchError } = await supabaseAdmin
+        const { data: serviceRequest, error: fetchError } = await supabaseAdmin
             .from('service_requests')
             .select('*')
             .eq('id', id)
             .single()
 
-        if (fetchError || !currentRequest) {
+        if (fetchError || !serviceRequest) {
             return NextResponse.json({
                 success: false,
                 error: 'Service request not found'
             } as ApiResponse, { status: 404 })
         }
 
-        // Only the provider this request was sent to may accept/reject it
-        const auth = await requireOwningProvider(request, supabaseAdmin, currentRequest.provider_id)
+        // Only the provider this job belongs to may mark it complete
+        const auth = await requireOwningProvider(request, supabaseAdmin, serviceRequest.provider_id)
         if (!auth.ok) {
             return NextResponse.json({
                 success: false,
@@ -73,66 +62,48 @@ export async function PATCH(
             } as ApiResponse, { status: auth.status })
         }
 
-        // Check if request is still pending
-        if (currentRequest.status !== 'pending') {
+        if (serviceRequest.status !== 'accepted') {
             return NextResponse.json({
                 success: false,
-                error: `Request already ${currentRequest.status}`
+                error: `Request cannot be completed from status "${serviceRequest.status}"`
             } as ApiResponse, { status: 400 })
         }
 
-        // Check if request has expired
-        if (new Date(currentRequest.expires_at) < new Date()) {
-            // Update to expired status
-            await supabaseAdmin
-                .from('service_requests')
-                .update({ status: 'expired' })
-                .eq('id', id)
-
+        if (!serviceRequest.otp_verified) {
             return NextResponse.json({
                 success: false,
-                error: 'Request has expired'
+                error: 'OTP must be verified before the job can be marked complete'
             } as ApiResponse, { status: 400 })
         }
 
-        // Update the request status
-        const newStatus = action === 'accept' ? 'accepted' : 'rejected'
-        
-        // Generate 6-digit OTP if accepting
-        const otp = action === 'accept' ? Math.floor(100000 + Math.random() * 900000).toString() : null
-        
         const { data: updatedRequest, error: updateError } = await supabaseAdmin
             .from('service_requests')
             .update({
-                status: newStatus,
-                responded_at: new Date().toISOString(),
-                ...(otp && { otp, otp_verified: false })
+                status: 'completed',
+                completed_at: new Date().toISOString()
             })
             .eq('id', id)
             .select()
             .single()
 
         if (updateError) {
-            console.error('Error updating request:', updateError)
+            console.error('Error completing request:', updateError)
             return NextResponse.json({
                 success: false,
-                error: 'Failed to update request'
+                error: 'Failed to mark request complete'
             } as ApiResponse, { status: 500 })
         }
 
-        // Don't hand the OTP back to the provider that just accepted -- they're
-        // meant to get it verbally from the consumer on arrival, not read it
-        // out of their own API response.
         const { otp: _otp, ...responseData } = updatedRequest
 
         return NextResponse.json({
             success: true,
             data: responseData,
-            message: `Request ${newStatus} successfully`
+            message: 'Job marked as completed'
         } as ApiResponse)
 
     } catch (error) {
-        console.error('Respond to request error:', error)
+        console.error('Complete request error:', error)
         return NextResponse.json({
             success: false,
             error: 'An unexpected error occurred'
