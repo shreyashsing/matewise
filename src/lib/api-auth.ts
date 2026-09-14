@@ -59,6 +59,38 @@ export async function requireOwningProvider(
 }
 
 /**
+ * Verifies that the caller is authenticated *and* has an admin profile.
+ * Admin status is looked up from `profiles.role` with the service-role
+ * client on every call -- never trusted from the session or user_metadata,
+ * which (unlike this) the user themselves can write to.
+ */
+export async function requireAdmin(
+    request: Request,
+    supabaseAdmin: SupabaseClient
+): Promise<AuthResult & { email?: string }> {
+    const user = await getAuthenticatedUser(request, supabaseAdmin)
+    if (!user) {
+        return { ok: false, status: 401, error: 'Authentication required' }
+    }
+
+    const { data: profile, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('role, email')
+        .eq('id', user.id)
+        .single()
+
+    if (profileError || !profile) {
+        return { ok: false, status: 403, error: 'You are not authorized to perform this action' }
+    }
+
+    if (profile.role !== 'admin') {
+        return { ok: false, status: 403, error: 'You are not authorized to perform this action' }
+    }
+
+    return { ok: true, userId: user.id, email: profile.email }
+}
+
+/**
  * Verifies that the caller is authenticated *and* is the consumer that owns
  * `consumerId` (a row id in public.consumers, not an auth user id).
  */

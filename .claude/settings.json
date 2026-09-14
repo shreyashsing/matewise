@@ -6,7 +6,19 @@
       "mcp__supabase__execute_sql",
       "Bash(grep -n \"otpVerified, setOtpVerified\\\\|jobCompleted, setJobCompleted\\\\|Mark Complete\\\\|disabled={!otpVerified}\" \"D:\\\\matewise\\\\matewise\\\\src\\\\app\\\\provider\\\\navigate\\\\[requestId]\\\\page.tsx\")",
       "Bash(pkill -f \"next dev\")",
-      "Bash(curl -s -o /dev/null -w \"port 3000: %{http_code}\\\\n\" http://localhost:3000/api/health)"
+      "Bash(curl -s -o /dev/null -w \"port 3000: %{http_code}\\\\n\" http://localhost:3000/api/health)",
+      "Bash(node scripts/create-admin.mjs shreeeyash1313@gmail.com)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -s http://localhost:3000/api/health)",
+      "Bash(curl -s http://localhost:3000/api/admin/me -H 'Authorization: Bearer __CMDSUB_OUTPUT__')",
+      "Bash(curl -s http://localhost:3000/api/admin/stats -H 'Authorization: Bearer __CMDSUB_OUTPUT__')",
+      "Bash(curl -s -X POST http://localhost:3000/api/admin/providers/93a210cb-796c-4b5d-a21f-4db0de830c5e/documents/sign -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -d '{\"field\":\"id_document_url\"}')",
+      "Bash(curl -s -X PATCH http://localhost:3000/api/admin/providers/93a210cb-796c-4b5d-a21f-4db0de830c5e -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -d '{\"admin_notes\":\"Smoke test note from Claude\"}')",
+      "Bash(curl -s -X PATCH http://localhost:3000/api/admin/providers/93a210cb-796c-4b5d-a21f-4db0de830c5e -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -d '{\"admin_notes\":null}' -o /dev/null -w 'revert status: %{http_code}\\\\n')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/api/admin/stats)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3000/api/admin/stats -H \"Authorization: Bearer garbage\")",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 3000 -State Listen | Select-Object -ExpandProperty OwningProcess\")",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 27168,5208 -Force -ErrorAction SilentlyContinue; Write-Output done\")"
     ]
   }
 }

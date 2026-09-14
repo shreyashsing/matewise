@@ -299,6 +299,127 @@ export interface FormState<T> {
 }
 
 // ============================================
+// Admin Types
+// ============================================
+
+export interface AdminUser {
+    id: string
+    email: string
+}
+
+export interface AdminStats {
+    total_providers: number
+    total_consumers: number
+    providers_by_status: { status: ProviderStatus; count: number }[]
+    providers_by_verification: { status: VerificationStatus; count: number }[]
+    providers_by_service: { service: ServiceCategory; count: number }[]
+    requests_by_status: { status: string; count: number }[]
+    requests_by_category: { service: ServiceCategory; count: number }[]
+    jobs_completed_total: number
+    completed_requests_total: number
+    signups_last_30_days: { date: string; consumers: number; providers: number }[]
+}
+
+// Admin API routes return raw `providers`/`consumers` table rows (flat
+// address_* columns, no nested address/location object) rather than the
+// mapped Provider/Consumer shape ProviderService produces for the public
+// app -- these mirror the actual row shape, not the Provider/Consumer types.
+export interface AdminProviderRow {
+    id: string
+    user_id: string
+    first_name: string
+    last_name: string
+    email: string
+    phone: string
+    business_name?: string
+    description?: string
+    primary_service: ServiceCategory
+    additional_services?: ServiceCategory[]
+    address_street: string
+    address_city: string
+    address_postcode: string
+    address_county?: string
+    address_country: string
+    formatted_address?: string
+    latitude: number
+    longitude: number
+    service_radius_km: number
+    years_experience?: number
+    hourly_rate?: number
+    minimum_charge?: number
+    status: ProviderStatus
+    verification_status: VerificationStatus
+    trust_score?: number
+    rating_average?: number
+    total_reviews?: number
+    total_jobs_completed?: number
+    is_available: boolean
+    availability_hours?: AvailabilityHours
+    id_document_url?: string
+    business_license_url?: string
+    certification_urls?: string[]
+    insurance_document_url?: string
+    documents_uploaded_at?: string
+    suspended_reason?: string
+    admin_notes?: string
+    created_at: string
+    updated_at: string
+    recent_service_requests?: AdminServiceRequestSummary[]
+}
+
+export interface AdminConsumerRow {
+    id: string
+    user_id: string
+    first_name: string
+    last_name: string
+    email: string
+    phone?: string
+    default_address_street?: string
+    default_address_city?: string
+    default_address_postcode?: string
+    default_address_county?: string
+    default_address_country?: string
+    default_formatted_address?: string
+    default_latitude?: number
+    default_longitude?: number
+    suspended_reason?: string
+    admin_notes?: string
+    created_at: string
+    updated_at: string
+    recent_service_requests?: AdminServiceRequestSummary[]
+}
+
+export interface AdminServiceRequestSummary {
+    id: string
+    consumer_id?: string
+    provider_id?: string
+    consumer_name?: string
+    consumer_phone?: string
+    consumer_email?: string
+    service_category: ServiceCategory
+    service_address?: string
+    distance_km?: number
+    status: string
+    otp_verified: boolean
+    expires_at?: string
+    created_at: string
+    responded_at?: string
+    completed_at?: string
+    providers?: { id?: string; business_name?: string; first_name?: string; last_name?: string }
+}
+
+export interface AdminActivityLogEntry {
+    id: string
+    admin_id: string | null
+    admin_email: string
+    action: string
+    entity_type: 'provider' | 'consumer' | 'service_request'
+    entity_id: string | null
+    details: Record<string, unknown> | null
+    created_at: string
+}
+
+// ============================================
 // Database Types (Supabase)
 // ============================================
 

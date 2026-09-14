@@ -632,3 +632,51 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated;
 -- last and win).
 REVOKE ALL ON public.service_requests FROM anon, authenticated;
 GRANT SELECT, INSERT ON public.service_requests TO authenticated;
+
+-- ============================================
+-- Admin Portal Support
+-- ============================================
+-- See supabase/migrations/add-admin-portal.sql. profiles.role already
+-- supports 'admin'; admin status is enforced in application code
+-- (src/lib/admin-auth.ts) via the service-role key, never trusted from the
+-- client, so no RLS policies are added here for admin access.
+
+CREATE TABLE IF NOT EXISTS public.admin_activity_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    admin_email TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id UUID,
+    details JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_activity_log_created_at
+    ON public.admin_activity_log (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_admin_activity_log_entity
+    ON public.admin_activity_log (entity_type, entity_id);
+
+ALTER TABLE public.admin_activity_log ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.admin_activity_log FROM anon, authenticated;
+
+ALTER TABLE public.providers
+    ADD COLUMN IF NOT EXISTS suspended_reason TEXT,
+    ADD COLUMN IF NOT EXISTS admin_notes TEXT;
+
+ALTER TABLE public.consumers
+    ADD COLUMN IF NOT EXISTS suspended_reason TEXT,
+    ADD COLUMN IF NOT EXISTS admin_notes TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_providers_created_at
+    ON public.providers (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_consumers_created_at
+    ON public.consumers (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_service_requests_created_at
+    ON public.service_requests (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_profiles_role
+    ON public.profiles (role);
