@@ -94,6 +94,17 @@ export async function PATCH(
             } as ApiResponse, { status: 500 })
         }
 
+        // Keep the provider's own completed-jobs counter in sync. Best-effort:
+        // the request is already marked completed above, which is the part
+        // that matters to this response -- don't fail the request over a
+        // counter update. A plain SQL increment (via RPC) avoids the race a
+        // client-side read-modify-write would have.
+        const { error: incrementError } = await supabaseAdmin
+            .rpc('increment_provider_jobs_completed', { p_provider_id: serviceRequest.provider_id })
+        if (incrementError) {
+            console.error('Failed to increment provider total_jobs_completed:', incrementError)
+        }
+
         const { otp: _otp, ...responseData } = updatedRequest
 
         return NextResponse.json({

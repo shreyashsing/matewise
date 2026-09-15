@@ -96,3 +96,14 @@ export const DEFAULT_UK_LOCATION = {
     longitude: -0.1278,
     city: 'London',
 } as const
+
+// Issue report form (consumer describing the problem when requesting a
+// service) -- shared between the request form and the API route that
+// validates/uploads it, so the two never drift apart.
+export const ISSUE_REPORT = {
+    descriptionMinLength: 10,
+    descriptionMaxLength: 1000,
+    maxImages: 4,
+    maxImageBytes: 5 * 1024 * 1024, // 5MB, matches the storage bucket's own limit
+    allowedImageTypes: ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'],
+} as const

@@ -466,11 +466,23 @@ CREATE OR REPLACE FUNCTION update_provider_location(provider_id UUID, lat DOUBLE
 RETURNS VOID AS $$
 BEGIN
     UPDATE public.providers
-    SET 
+    SET
         latitude = lat,
         longitude = lng,
         location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
     WHERE id = provider_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Atomic increment of a provider's completed-jobs counter, called from
+-- PATCH /api/service-requests/[id]/complete when a request transitions to
+-- 'completed'. See supabase/migrations/fix-provider-jobs-completed-tracking.sql.
+CREATE OR REPLACE FUNCTION increment_provider_jobs_completed(p_provider_id UUID)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE public.providers
+    SET total_jobs_completed = COALESCE(total_jobs_completed, 0) + 1
+    WHERE id = p_provider_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

@@ -351,8 +351,18 @@ export default function ServiceConfirmationPage() {
           </Card>
         )}
 
-        {/* OTP */}
-        {!request.otp_verified ? (
+        {/* OTP / service progress */}
+        {request.status === 'completed' ? (
+          <Card className="rounded-2xl border-emerald-100 bg-emerald-50/60 shadow-sm p-6 text-center">
+            <div className="h-11 w-11 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto mb-3">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <p className="font-semibold text-emerald-900">Service completed</p>
+            <p className="text-sm text-emerald-700 mt-1">
+              This service has been marked as completed. Thanks for booking with us!
+            </p>
+          </Card>
+        ) : !request.otp_verified ? (
           <Card className="rounded-2xl border-slate-200 shadow-sm p-6 text-center">
             <div className="flex items-center justify-center gap-1.5 mb-4">
               <ShieldCheck className="h-4 w-4 text-slate-400" />

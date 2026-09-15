@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -14,7 +14,8 @@ import {
     XCircle,
     History,
     MapPin,
-    Navigation as NavigationIcon
+    Navigation as NavigationIcon,
+    ImageIcon
 } from 'lucide-react'
 import { Button, Card, CardContent } from '@/components/ui'
 import { useAuth } from '@/hooks/use-auth'
@@ -25,6 +26,10 @@ interface ServiceRequest {
     consumer_id: string
     consumer_name: string
     service_category: string
+    service_address?: string
+    distance_km?: number
+    issue_description?: string
+    issue_images?: string[]
     status: 'pending' | 'accepted' | 'rejected' | 'expired'
     created_at: string
     expires_at: string
@@ -38,6 +43,8 @@ interface ServiceRequestHistoryItem {
     service_category: string
     service_address?: string
     distance_km?: number
+    issue_description?: string
+    issue_images?: string[]
     status: 'pending' | RequestHistoryStatus
     otp_verified: boolean
     created_at: string
@@ -123,11 +130,43 @@ export default function ProviderDashboard() {
         fetchProviderData()
     }, [user])
 
-    // Subscribe to real-time service requests
+    // Fetch pending requests (issue description + signed photo URLs come
+    // from the API, not the raw table -- see fetchHistory below for why
+    // realtime alone can't serve those directly).
+    const fetchPendingRequests = useCallback(async () => {
+        if (!providerData?.id) return
+        try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) return
+
+            const response = await fetch('/api/service-requests?scope=provider&status=pending', {
+                headers: { Authorization: `Bearer ${session.access_token}` }
+            })
+            const result = await response.json()
+
+            if (result.success && result.data) {
+                setPendingRequests(result.data as ServiceRequest[])
+            }
+        } catch (err) {
+            console.error('Failed to fetch pending requests:', err)
+        }
+    }, [providerData?.id])
+
+    // Load whatever's already pending as soon as we know who this provider
+    // is (covers a page refresh while a request is still waiting), then
+    // keep it current.
+    useEffect(() => {
+        fetchPendingRequests()
+    }, [fetchPendingRequests])
+
+    // Realtime only tells us *that* something changed -- the row it pushes
+    // is the raw table data (issue photos as private storage paths, not
+    // viewable URLs), so on every insert/update we just refetch the
+    // provider-scoped list above, which signs those paths into short-lived
+    // URLs before they reach the client.
     useEffect(() => {
         if (!providerData?.id || !supabase) return
 
-        // Subscribe to service_requests table for this provider
         const channel = supabase
             .channel('provider-requests')
             .on(
@@ -138,12 +177,7 @@ export default function ProviderDashboard() {
                     table: 'service_requests',
                     filter: `provider_id=eq.${providerData.id}`
                 },
-                (payload: { new: ServiceRequest }) => {
-                    const newRequest = payload.new
-                    if (newRequest.status === 'pending') {
-                        setPendingRequests(prev => [...prev, newRequest])
-                    }
-                }
+                () => fetchPendingRequests()
             )
             .on(
                 'postgres_changes',
@@ -153,22 +187,14 @@ export default function ProviderDashboard() {
                     table: 'service_requests',
                     filter: `provider_id=eq.${providerData.id}`
                 },
-                (payload: { new: ServiceRequest }) => {
-                    const updatedRequest = payload.new
-                    if (updatedRequest.status !== 'pending') {
-                        // Remove from pending if no longer pending
-                        setPendingRequests(prev => 
-                            prev.filter(r => r.id !== updatedRequest.id)
-                        )
-                    }
-                }
+                () => fetchPendingRequests()
             )
             .subscribe()
 
         return () => {
             supabase.removeChannel(channel)
         }
-    }, [providerData?.id])
+    }, [providerData?.id, fetchPendingRequests])
 
     // Fetch job history (accepted/completed/rejected/expired requests)
     const fetchHistory = useCallback(async () => {
@@ -245,6 +271,23 @@ export default function ProviderDashboard() {
             setProcessingRequest(null)
         }
     }, [router, fetchHistory])
+
+    // Only one incoming request is ever shown at a time -- the soonest to
+    // expire -- as a focused popup rather than a stack of banners. Anything
+    // else pending just waits its turn.
+    const activeRequest = pendingRequests.length > 0
+        ? [...pendingRequests].sort(
+            (a, b) => new Date(a.expires_at).getTime() - new Date(b.expires_at).getTime()
+        )[0]
+        : null
+
+    // The popup's own countdown hit zero client-side. The row is still
+    // "pending" server-side until someone acts on it or it's re-fetched, but
+    // there's no reason to keep showing it -- drop it locally so the next
+    // queued request (if any) takes its place.
+    const handleRequestExpire = useCallback((requestId: string) => {
+        setPendingRequests(prev => prev.filter(r => r.id !== requestId))
+    }, [])
 
     const handleSignOut = async () => {
         setIsSigningOut(true)
@@ -328,28 +371,6 @@ export default function ProviderDashboard() {
                     </Card>
                 )}
 
-                {/* Incoming Service Requests */}
-                {pendingRequests.length > 0 && (
-                    <div className="mb-8 space-y-4">
-                        <div className="flex items-center gap-2">
-                            <Bell className="h-5 w-5 text-blue-600" />
-                            <h2 className="text-xl font-bold text-slate-900">
-                                Incoming Requests ({pendingRequests.length})
-                            </h2>
-                        </div>
-                        
-                        {pendingRequests.map(request => (
-                            <ServiceRequestNotification
-                                key={request.id}
-                                request={request}
-                                onAccept={() => handleRequestResponse(request.id, 'accept')}
-                                onReject={() => handleRequestResponse(request.id, 'reject')}
-                                isProcessing={processingRequest === request.id}
-                            />
-                        ))}
-                    </div>
-                )}
-
                 {/* Empty State when no requests */}
                 {pendingRequests.length === 0 && (
                     <Card className="mb-8">
@@ -393,6 +414,19 @@ export default function ProviderDashboard() {
                     )}
                 </div>
             </main>
+
+            {/* Incoming request popup -- one at a time, most urgent first */}
+            {activeRequest && (
+                <IncomingRequestModal
+                    key={activeRequest.id}
+                    request={activeRequest}
+                    queueCount={pendingRequests.length}
+                    onAccept={() => handleRequestResponse(activeRequest.id, 'accept')}
+                    onReject={() => handleRequestResponse(activeRequest.id, 'reject')}
+                    onExpire={() => handleRequestExpire(activeRequest.id)}
+                    isProcessing={processingRequest === activeRequest.id}
+                />
+            )}
         </div>
     )
 }
@@ -434,7 +468,13 @@ function JobHistoryRow({ item }: { item: ServiceRequestHistoryItem & { status: R
                         {item.service_category.replace('_', ' ')}
                         {item.service_address ? ` · ${item.service_address}` : ''}
                     </p>
-                    <p className="text-xs text-slate-400 mt-1">{dateLabel}</p>
+                    {item.issue_description && (
+                        <p className="text-xs text-slate-500 mt-1 truncate">&ldquo;{item.issue_description}&rdquo;</p>
+                    )}
+                    <p className="text-xs text-slate-400 mt-1">
+                        {dateLabel}
+                        {item.issue_images && item.issue_images.length > 0 ? ` · ${item.issue_images.length} photo${item.issue_images.length === 1 ? '' : 's'}` : ''}
+                    </p>
                 </div>
 
                 {item.status === 'accepted' && (
@@ -451,122 +491,217 @@ function JobHistoryRow({ item }: { item: ServiceRequestHistoryItem & { status: R
 }
 
 /**
- * Service Request Notification Component
- * Shows incoming request with countdown and accept/reject buttons
+ * Incoming Request Popup
+ * A focused modal takeover for a new service request -- one at a time, most
+ * urgent first (see `activeRequest` in ProviderDashboard) -- with a live
+ * countdown ring, what the consumer is facing, and accept/decline.
  */
-function ServiceRequestNotification({
+function IncomingRequestModal({
     request,
+    queueCount,
     onAccept,
     onReject,
+    onExpire,
     isProcessing
 }: {
     request: ServiceRequest
+    queueCount: number
     onAccept: () => void
     onReject: () => void
+    onExpire: () => void
     isProcessing: boolean
 }) {
-    const [timeRemaining, setTimeRemaining] = useState(30)
-    const [isExpired, setIsExpired] = useState(false)
+    const TIMEOUT_SECONDS = 30
+    const RING_RADIUS = 34
+    const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
-    // Calculate initial time remaining
+    const secondsLeft = () => Math.max(0, Math.floor((new Date(request.expires_at).getTime() - Date.now()) / 1000))
+    const [timeRemaining, setTimeRemaining] = useState(secondsLeft)
+    const hasExpiredRef = useRef(false)
+
+    // A different (more urgent) request can take over this same popup --
+    // reset the clock and the one-shot expiry guard whenever that happens.
     useEffect(() => {
-        const expiresAt = new Date(request.expires_at).getTime()
-        const now = Date.now()
-        const remaining = Math.max(0, Math.floor((expiresAt - now) / 1000))
-        setTimeRemaining(remaining)
-        if (remaining === 0) {
-            setIsExpired(true)
-        }
-    }, [request.expires_at])
+        hasExpiredRef.current = false
+        setTimeRemaining(secondsLeft())
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [request.id])
+
+    const isExpired = timeRemaining <= 0
 
     // Countdown timer
     useEffect(() => {
         if (isExpired) return
-
         const timer = setInterval(() => {
-            setTimeRemaining(prev => {
-                if (prev <= 1) {
-                    clearInterval(timer)
-                    setIsExpired(true)
-                    return 0
-                }
-                return prev - 1
-            })
+            setTimeRemaining(prev => Math.max(0, prev - 1))
         }, 1000)
-
         return () => clearInterval(timer)
     }, [isExpired])
 
-    if (isExpired) {
-        return null // Don't show expired requests
-    }
+    // Hand it back to the parent once the clock runs out, so the next
+    // queued request (if any) can take over. Guarded so it only fires once
+    // per request and never while a response is already in flight.
+    useEffect(() => {
+        if (!isExpired || isProcessing || hasExpiredRef.current) return
+        hasExpiredRef.current = true
+        onExpire()
+    }, [isExpired, isProcessing, onExpire])
+
+    if (isExpired) return null
+
+    const urgency: 'normal' | 'warning' | 'critical' =
+        timeRemaining <= 5 ? 'critical' : timeRemaining <= 15 ? 'warning' : 'normal'
+
+    const ringColor = { normal: '#2563eb', warning: '#d97706', critical: '#dc2626' }[urgency]
+    const ringTrack = { normal: '#dbeafe', warning: '#fef3c7', critical: '#fee2e2' }[urgency]
+    const timeTextColor = { normal: 'text-blue-600', warning: 'text-amber-600', critical: 'text-red-600' }[urgency]
+
+    const initials = request.consumer_name
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(word => word[0]?.toUpperCase())
+        .join('') || '?'
 
     return (
-        <Card className="border-blue-200 bg-blue-50 animate-in slide-in-from-right duration-300 overflow-hidden">
-            <CardContent className="p-0">
-                {/* Progress bar for time remaining */}
-                <div className="h-1 bg-blue-100">
-                    <div 
-                        className="h-full bg-blue-500 transition-all duration-1000"
-                        style={{ width: `${(timeRemaining / 30) * 100}%` }}
-                    />
-                </div>
-                
-                <div className="p-6">
-                    <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-4">
-                            <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center animate-pulse">
-                                <Bell className="h-6 w-6 text-blue-600" />
-                            </div>
-                            <div>
-                                <h3 className="font-semibold text-blue-900 mb-1">
-                                    New Service Request!
-                                </h3>
-                                <p className="text-blue-700 text-sm mb-2">
-                                    <span className="font-medium">{request.consumer_name}</span> is requesting{' '}
-                                    <span className="capitalize font-medium">{request.service_category.replace('_', ' ')}</span>
-                                </p>
-                                <div className="flex items-center gap-2 text-sm text-blue-600">
-                                    <Clock className="h-4 w-4" />
-                                    <span className="font-medium">{timeRemaining}s remaining to respond</span>
-                                </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+            <Card className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-4 duration-300 max-h-[90vh] overflow-y-auto">
+                <CardContent className="p-6">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-5">
+                        <div className="flex items-center gap-2">
+                            <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600" />
+                            </span>
+                            <span className="text-xs font-semibold tracking-wide text-blue-600 uppercase">New Request</span>
+                        </div>
+                        {queueCount > 1 && (
+                            <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                                +{queueCount - 1} waiting
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Countdown ring + consumer */}
+                    <div className="flex items-center gap-4 mb-5">
+                        <div className="relative h-20 w-20 shrink-0">
+                            <svg className="h-full w-full -rotate-90" viewBox="0 0 80 80">
+                                <circle cx="40" cy="40" r={RING_RADIUS} stroke={ringTrack} strokeWidth="6" fill="none" />
+                                <circle
+                                    cx="40"
+                                    cy="40"
+                                    r={RING_RADIUS}
+                                    stroke={ringColor}
+                                    strokeWidth="6"
+                                    fill="none"
+                                    strokeLinecap="round"
+                                    strokeDasharray={RING_CIRCUMFERENCE}
+                                    strokeDashoffset={RING_CIRCUMFERENCE * (1 - timeRemaining / TIMEOUT_SECONDS)}
+                                    className="transition-all duration-1000 ease-linear"
+                                />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <span className={`text-xl font-bold tabular-nums ${timeTextColor} ${urgency === 'critical' ? 'animate-pulse' : ''}`}>
+                                    {timeRemaining}
+                                </span>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <Button
-                                onClick={onReject}
-                                variant="outline"
-                                className="border-red-200 text-red-700 hover:bg-red-50"
-                                disabled={isProcessing}
-                            >
-                                {isProcessing ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    <>
-                                        <XCircle className="h-4 w-4 mr-1" />
-                                        Decline
-                                    </>
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1.5">
+                                <div className="h-8 w-8 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                                    {initials}
+                                </div>
+                                <h3 className="font-bold text-slate-900 text-lg truncate">{request.consumer_name}</h3>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-medium capitalize bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">
+                                    {request.service_category.replace('_', ' ')}
+                                </span>
+                                {typeof request.distance_km === 'number' && (
+                                    <span className="text-xs text-slate-500 flex items-center gap-1">
+                                        <MapPin className="h-3 w-3" />
+                                        {request.distance_km.toFixed(1)} km away
+                                    </span>
                                 )}
-                            </Button>
-                            <Button
-                                onClick={onAccept}
-                                className="bg-green-600 hover:bg-green-700 text-white"
-                                disabled={isProcessing}
-                            >
-                                {isProcessing ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    <>
-                                        <CheckCircle className="h-4 w-4 mr-1" />
-                                        Accept
-                                    </>
-                                )}
-                            </Button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </CardContent>
-        </Card>
+
+                    {/* What the consumer is actually facing */}
+                    {(request.issue_description || (request.issue_images && request.issue_images.length > 0)) && (
+                        <div className="mb-5 space-y-2">
+                            {request.issue_description && (
+                                <p className="text-sm text-slate-700 bg-slate-50 border border-slate-100 rounded-xl p-3 leading-relaxed">
+                                    {request.issue_description}
+                                </p>
+                            )}
+                            {request.issue_images && request.issue_images.length > 0 && (
+                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                    {request.issue_images.map((url, index) => (
+                                        <a
+                                            key={url}
+                                            href={url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="relative block h-16 w-16 rounded-xl overflow-hidden border border-slate-200 shrink-0 group"
+                                        >
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img src={url} alt={`Issue photo ${index + 1}`} className="h-full w-full object-cover" />
+                                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                                                <ImageIcon className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            </div>
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {request.service_address && (
+                        <div className="flex items-start gap-2 text-sm text-slate-500 mb-5">
+                            <MapPin className="h-4 w-4 mt-0.5 shrink-0" />
+                            <span>{request.service_address}</span>
+                        </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <Button
+                            onClick={onReject}
+                            variant="outline"
+                            size="lg"
+                            className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 rounded-xl"
+                            disabled={isProcessing}
+                        >
+                            {isProcessing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <>
+                                    <XCircle className="h-4 w-4 mr-1.5" />
+                                    Decline
+                                </>
+                            )}
+                        </Button>
+                        <Button
+                            onClick={onAccept}
+                            size="lg"
+                            className="bg-green-600 hover:bg-green-700 text-white rounded-xl"
+                            disabled={isProcessing}
+                        >
+                            {isProcessing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <>
+                                    <CheckCircle className="h-4 w-4 mr-1.5" />
+                                    Accept
+                                </>
+                            )}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        </div>
     )
 }

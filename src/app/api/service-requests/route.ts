@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import type { ApiResponse, ServiceCategory } from '@/types'
 import { getAuthenticatedUser } from '@/lib/api-auth'
+import { uploadIssueImage, signIssueImagePaths } from '@/lib/service-request-images'
+import { ISSUE_REPORT } from '@/config/constants'
 
 // Create admin client
 function getSupabaseAdmin() {
@@ -62,16 +64,18 @@ export async function POST(request: NextRequest) {
             } as ApiResponse, { status: 404 })
         }
 
-        const body = await request.json()
+        // The request form sends multipart/form-data -- text fields plus up
+        // to a handful of issue photos -- not JSON, since it needs to carry
+        // files.
+        const formData = await request.formData()
 
-        const {
-            provider_id,
-            service_category,
-            service_latitude,
-            service_longitude,
-            service_address,
-            distance_km
-        } = body
+        const provider_id = formData.get('provider_id')?.toString()
+        const service_category = formData.get('service_category')?.toString() as ServiceCategory | undefined
+        const service_latitude = formData.get('service_latitude')?.toString()
+        const service_longitude = formData.get('service_longitude')?.toString()
+        const service_address = formData.get('service_address')?.toString()
+        const distance_km = formData.get('distance_km')?.toString()
+        const issue_description = formData.get('issue_description')?.toString().trim() || ''
 
         // Validate required fields
         if (!provider_id || !service_category) {
@@ -81,19 +85,72 @@ export async function POST(request: NextRequest) {
             } as ApiResponse, { status: 400 })
         }
 
-        // Check if there's already a pending request from this consumer to this provider
+        if (issue_description.length < ISSUE_REPORT.descriptionMinLength) {
+            return NextResponse.json({
+                success: false,
+                error: `Please describe the issue in at least ${ISSUE_REPORT.descriptionMinLength} characters`
+            } as ApiResponse, { status: 400 })
+        }
+        if (issue_description.length > ISSUE_REPORT.descriptionMaxLength) {
+            return NextResponse.json({
+                success: false,
+                error: `Description is too long (max ${ISSUE_REPORT.descriptionMaxLength} characters)`
+            } as ApiResponse, { status: 400 })
+        }
+
+        const imageFiles = formData.getAll('issue_images').filter((entry): entry is File => entry instanceof File && entry.size > 0)
+        if (imageFiles.length > ISSUE_REPORT.maxImages) {
+            return NextResponse.json({
+                success: false,
+                error: `You can attach up to ${ISSUE_REPORT.maxImages} photos`
+            } as ApiResponse, { status: 400 })
+        }
+
+        // Check if there's already a pending request from this consumer to this provider.
+        // A pending row whose 30-second window has already passed doesn't count --
+        // the provider missed it and nothing else ever flips its status server-side
+        // (that only happens reactively, in PATCH .../respond, if the provider tries
+        // to act on it late), so without this it would block re-requesting this same
+        // provider forever.
         const { data: existingRequest } = await supabaseAdmin
             .from('service_requests')
-            .select('id')
+            .select('id, expires_at')
             .eq('provider_id', provider_id)
             .eq('consumer_id', consumer.id)
             .eq('status', 'pending')
             .single()
 
         if (existingRequest) {
+            if (new Date(existingRequest.expires_at) > new Date()) {
+                return NextResponse.json({
+                    success: false,
+                    error: 'You already have a pending request with this provider'
+                } as ApiResponse, { status: 400 })
+            }
+
+            // It's stale -- close it out properly instead of leaving it stuck
+            // at "pending" (which the provider's job history and any future
+            // query would otherwise keep showing as still awaiting a response).
+            await supabaseAdmin
+                .from('service_requests')
+                .update({ status: 'expired' })
+                .eq('id', existingRequest.id)
+        }
+
+        // Upload issue photos (if any) before creating the row -- an upload
+        // failure should stop the request from going out with a broken
+        // reference rather than silently dropping the photo.
+        const imagePaths: string[] = []
+        const imageErrors: string[] = []
+        for (let i = 0; i < imageFiles.length; i++) {
+            const { path, error: uploadError } = await uploadIssueImage(supabaseAdmin, user.id, i, imageFiles[i])
+            if (path) imagePaths.push(path)
+            if (uploadError) imageErrors.push(uploadError)
+        }
+        if (imageErrors.length > 0) {
             return NextResponse.json({
                 success: false,
-                error: 'You already have a pending request with this provider'
+                error: imageErrors.join(', ')
             } as ApiResponse, { status: 400 })
         }
 
@@ -109,10 +166,12 @@ export async function POST(request: NextRequest) {
                 consumer_phone: consumer.phone || null,
                 consumer_email: consumer.email,
                 service_category,
-                service_latitude: service_latitude || null,
-                service_longitude: service_longitude || null,
+                service_latitude: service_latitude ? parseFloat(service_latitude) : null,
+                service_longitude: service_longitude ? parseFloat(service_longitude) : null,
                 service_address: service_address || null,
-                distance_km: distance_km || null,
+                distance_km: distance_km ? parseFloat(distance_km) : null,
+                issue_description,
+                issue_image_paths: imagePaths.length > 0 ? imagePaths : null,
                 status: 'pending',
                 expires_at: expiresAt
             })
@@ -127,9 +186,14 @@ export async function POST(request: NextRequest) {
             } as ApiResponse, { status: 500 })
         }
 
+        const { issue_image_paths: _issueImagePaths, ...safeServiceRequest } = serviceRequest
+
         return NextResponse.json({
             success: true,
-            data: serviceRequest,
+            data: {
+                ...safeServiceRequest,
+                issue_images: await signIssueImagePaths(supabaseAdmin, imagePaths)
+            },
             message: 'Service request sent successfully'
         } as ApiResponse, { status: 201 })
 
@@ -201,11 +265,14 @@ export async function GET(request: NextRequest) {
             // fetched by both the provider and consumer apps, and the OTP is
             // only meant to reach the consumer. See
             // GET /api/service-requests/[id]/otp for the one place it's served.
-            const { otp: _otp, ...safeData } = data
+            const { otp: _otp, issue_image_paths, ...safeData } = data
 
             return NextResponse.json({
                 success: true,
-                data: safeData
+                data: {
+                    ...safeData,
+                    issue_images: await signIssueImagePaths(supabaseAdmin, issue_image_paths)
+                }
             } as ApiResponse)
         }
 
@@ -258,7 +325,10 @@ export async function GET(request: NextRequest) {
                     } as ApiResponse, { status: 500 })
                 }
 
-                const safeRows = (data || []).map(({ otp: _otp, ...rest }) => rest)
+                const safeRows = await Promise.all((data || []).map(async ({ otp: _otp, issue_image_paths, ...rest }) => ({
+                    ...rest,
+                    issue_images: await signIssueImagePaths(supabaseAdmin, issue_image_paths)
+                })))
 
                 return NextResponse.json({
                     success: true,
@@ -299,7 +369,10 @@ export async function GET(request: NextRequest) {
                 } as ApiResponse, { status: 500 })
             }
 
-            const safeRows = (data || []).map(({ otp: _otp, ...rest }) => rest)
+            const safeRows = await Promise.all((data || []).map(async ({ otp: _otp, issue_image_paths, ...rest }) => ({
+                ...rest,
+                issue_images: await signIssueImagePaths(supabaseAdmin, issue_image_paths)
+            })))
 
             return NextResponse.json({
                 success: true,

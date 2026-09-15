@@ -24,7 +24,10 @@ import {
     Car,
     Footprints,
     CheckCircle,
-    Shield
+    Shield,
+    ChevronDown,
+    ChevronUp,
+    FileText
 } from 'lucide-react'
 import { Button, Card, CardContent, Input } from '@/components/ui'
 import { GoogleMapsProvider } from '@/components/maps'
@@ -41,6 +44,8 @@ interface ServiceRequestDetails {
     service_longitude: number
     service_address?: string
     distance_km?: number
+    issue_description?: string
+    issue_images?: string[]
     status: string
     otp_verified?: boolean
 }
@@ -91,6 +96,7 @@ export default function ProviderNavigatePage({
     const [otpVerifying, setOtpVerifying] = useState(false)
     const [otpError, setOtpError] = useState<string | null>(null)
     const [otpVerified, setOtpVerified] = useState(false)
+    const [showIssueDetails, setShowIssueDetails] = useState(false)
     
     // Refs
     const mapRef = useRef<google.maps.Map | null>(null)
@@ -536,6 +542,51 @@ export default function ProviderNavigatePage({
                             </a>
                         )}
                     </div>
+
+                    {/* Reported Issue - collapsed by default so it doesn't crowd the map */}
+                    {(request.issue_description || (request.issue_images && request.issue_images.length > 0)) && (
+                        <div className="mb-4">
+                            <button
+                                type="button"
+                                onClick={() => setShowIssueDetails((prev) => !prev)}
+                                className="w-full flex items-center justify-between gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 transition-colors"
+                            >
+                                <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                                    <FileText className="h-4 w-4 text-slate-500" />
+                                    Reported issue
+                                </span>
+                                {showIssueDetails ? (
+                                    <ChevronUp className="h-4 w-4 text-slate-400" />
+                                ) : (
+                                    <ChevronDown className="h-4 w-4 text-slate-400" />
+                                )}
+                            </button>
+
+                            {showIssueDetails && (
+                                <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                                    {request.issue_description && (
+                                        <p className="text-sm text-slate-700">{request.issue_description}</p>
+                                    )}
+                                    {request.issue_images && request.issue_images.length > 0 && (
+                                        <div className="flex gap-2 overflow-x-auto">
+                                            {request.issue_images.map((url, index) => (
+                                                <a
+                                                    key={url}
+                                                    href={url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="block h-20 w-20 rounded-lg overflow-hidden border border-slate-200 shrink-0 hover:opacity-90 transition-opacity"
+                                                >
+                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                    <img src={url} alt={`Issue photo ${index + 1}`} className="h-full w-full object-cover" />
+                                                </a>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* Action Buttons */}
                     <div className="space-y-3">
